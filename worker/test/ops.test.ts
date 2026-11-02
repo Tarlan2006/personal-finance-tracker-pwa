@@ -1,0 +1,12 @@
+import { it, expect } from 'vitest';
+import { measureSession } from './ops-measure';
+
+it('бюджет обращений к хранилищу на запрос не превышен', async () => {
+  const rows = await measureSession();
+  const budget: Record<string, number> = {
+    'POST /api/auth/login': 4, 'GET /api/accounts (экран входа)': 1, 'GET /api/me': 2, 'GET /api/categories': 2,
+    'GET /api/entries (лента, 100)': 3, 'POST /api/entries (добавить)': 5, 'POST /api/entries (повтор, дубль)': 5,
+    'GET /api/reports/summary': 3, 'POST /api/import (200 строк)': 14, 'POST /api/shortcuts/add': 8,
+  };
+  for (const r of rows) if (budget[r.step] !== undefined) expect(r.ops, r.step).toBeLessThanOrEqual(budget[r.step]);
+});

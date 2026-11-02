@@ -1,0 +1,35 @@
+{
+  "name": "qarjy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx scripts/dev-server.ts",
+    "build": "vite build web",
+    "typecheck": "tsc -p worker/tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test --project=iPhone15Pro-dark && playwright test --project=iPhone17Pro-light",
+    "migrate:local": "wrangler d1 migrations apply qarjy --local",
+    "migrate:remote": "wrangler d1 migrations apply qarjy --remote",
+    "accounts": "tsx scripts/accounts.ts",
+    "scan-secrets": "node scripts/scan-secrets.mjs",
+    "verify-deployment": "node scripts/verify-deployment.mjs",
+    "ops-report": "tsx scripts/ops-report.ts"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250101.0",
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0"
+  }
+}

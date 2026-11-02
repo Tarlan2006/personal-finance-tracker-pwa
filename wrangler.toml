@@ -1,0 +1,19 @@
+name = "qarjy"
+main = "worker/src/index.ts"
+compatibility_date = "2025-01-01"
+
+[assets]
+directory = "./web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "qarjy"
+# Подставьте id после `wrangler d1 create qarjy` (см. README.md)
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[vars]
+APP_ORIGIN = "https://qarjy.example.workers.dev"
