@@ -34,7 +34,7 @@ describe('атомарный импорт и ограничения D1',()=>{
       for(const arg of args) if(typeof arg==='string') expect(new TextEncoder().encode(arg).length).toBeLessThan(MAX_IMPORT_REPORT_BYTES);
       return stmt(sql,...args);
     };
-    const r=await runImport(store,account,{csv:csv(MAX_IMPORT_ROWS),mapping});
+    const r=await runImport(store,account,{csv:csv(500),mapping});
     expect(r).toMatchObject({total:500,imported:500,duplicates:0,rejected:0});
     expect(store.ops).toBeLessThanOrEqual(2);
     expect([count('entries'),count('counterparties'),count('import_batches')]).toEqual([500,500,1]);
@@ -52,9 +52,9 @@ describe('атомарный импорт и ограничения D1',()=>{
     expect([count('entries'),count('counterparties'),count('import_batches')]).toEqual([0,0,0]);local.raw.close();
   });
 
-  for(const hasHeader of [true,false]) it(`501 строк (шапка ${hasHeader}): 413 до записей`,async()=>{
+  for(const hasHeader of [true,false]) it(`1001 строк (шапка ${hasHeader}): 413 до записей`,async()=>{
     const {store,local,account,count}=await setup();
-    await expect(runImport(store,account,{csv:hasHeader?csv(501):csv(501).split('\n').slice(1).join('\n'),mapping:{...mapping,hasHeader}})).rejects.toMatchObject({status:413,code:'too_many_rows'});
+    await expect(runImport(store,account,{csv:hasHeader?csv(1001):csv(1001).split('\n').slice(1).join('\n'),mapping:{...mapping,hasHeader}})).rejects.toMatchObject({status:413,code:'too_many_rows'});
     expect([count('entries'),count('counterparties'),count('import_batches')]).toEqual([0,0,0]);local.raw.close();
   });
 
@@ -96,4 +96,11 @@ describe('атомарный импорт и ограничения D1',()=>{
     const {store,local,account}=await setup();const r=await runImport(store,account,{csv:'date;amount;name',mapping});
     expect(r).toMatchObject({total:0,imported:0,duplicates:0,rejected:0,rows:[]});expect((await getBatch(store,account,r.batchId!)).rows).toEqual([]);local.raw.close();
   });
+});
+
+
+it('1000 строк: атомарная запись и ограниченный dryRun',async()=>{
+ const {store,local,account,count}=await setup();const r=await runImport(store,account,{csv:csv(MAX_IMPORT_ROWS),mapping});
+ expect(r).toMatchObject({total:1000,imported:1000,duplicates:0});expect(store.ops).toBe(2);expect(count('entries')).toBe(1000);
+ store.ops=0;const dry=await runImport(store,account,{csv:csv(1000),mapping,dryRun:true});expect(dry.duplicates).toBe(1000);expect(store.ops).toBeLessThanOrEqual(13);local.raw.close();
 });

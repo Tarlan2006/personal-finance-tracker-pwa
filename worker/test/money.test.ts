@@ -187,9 +187,9 @@ describe('импорт: ни одна строка не теряется', () =>
     const b = (await call(env, 'POST', '/api/import', { cookie: o, body: { csv: 'd,s,t\n01.11.2026,100,Покупка\n02.11.2026,250,Пополнение\n03.11.2026,9,Что-то\n', mapping: { dateCol: 0, amountCol: 1, directionCol: 2, outValues: ['Покупка'], inValues: ['Пополнение'] } } })).data;
     expect([b.imported, b.rejected]).toEqual([2, 1]);
   });
-  it('неподдержанный профиль Freedom отклоняется', async () => {
+  it('неизвестный профиль отклоняется', async () => {
     const { env, o } = await setup();
-    const r = await call(env, 'POST', '/api/import', { cookie: o, body: { csv: CSV, mapping: { ...MAP, bank: 'freedom' } } });
+    const r = await call(env, 'POST', '/api/import', { cookie: o, body: { csv: CSV, mapping: { ...MAP, bank: 'unknown-bank' } } });
     expect(r.status).toBe(400); expect(r.data.error).toBe('profile_not_ready');
   });
   it('отчёт по месяцу и экспорт CSV содержат все импортированные строки', async () => {
@@ -283,7 +283,7 @@ describe('аудит импорта: повреждённые и неодноз�
   });
   it('длинные описания не обрезаются молча и не создают ложных дублей', async () => {
     const {env,o} = await setup();
-    const r = await call(env,'POST','/api/import',{cookie:o,body:{csv:'date;amount;name;note\n01.11.2026;-123;TEST;'+ 'X'.repeat(301),mapping:{dateCol:0,amountCol:1,counterpartyCol:2,noteCol:3}}});
+    const r = await call(env,'POST','/api/import',{cookie:o,body:{csv:'date;amount;name;note\n01.11.2026;-123;TEST;'+ 'X'.repeat(501),mapping:{dateCol:0,amountCol:1,counterpartyCol:2,noteCol:3}}});
     expect(r.data).toMatchObject({imported:0,rejected:1,total:1});
     expect(r.data.rows[0].reason).toContain('слишком длинное');
   });

@@ -37,9 +37,13 @@ export default {
       store.ops=0;const dry=await runImport(store,bulk,{csv:csv(500),mapping,dryRun:true});const dryOps=store.ops;
       assert(dry.imported===0&&dry.duplicates===500&&dryOps<=7,'500 rows: dryRun within budget');
       const retry=await runImport(store,bulk,{csv:csv(500),mapping});assert(retry.imported===0&&retry.duplicates===500,'500 rows: retry');
+      const large=await account('runtime-large');store.ops=0;
+      const max=await runImport(store,large,{csv:csv(1000),mapping});const maxOps=store.ops;
+      assert(max.imported===1000&&max.rows.length===1000&&maxOps===2,'1000 rows: atomic report and budget');
+      store.ops=0;const maxDry=await runImport(store,large,{csv:csv(1000),mapping,dryRun:true});assert(maxDry.duplicates===1000&&store.ops<=13,'1000 rows: dryRun budget');
       const limited=await account('runtime-limited');let limitedError=false;
-      try{await runImport(store,limited,{csv:csv(501),mapping});}catch(e:any){limitedError=e.status===413;}
-      assert(limitedError&&await count('entries',limited)===0&&await count('import_batches',limited)===0,'501 rows: rejected before write');
+      try{await runImport(store,limited,{csv:csv(1001),mapping});}catch(e:any){limitedError=e.status===413;}
+      assert(limitedError&&await count('entries',limited)===0&&await count('import_batches',limited)===0,'1001 rows: rejected before write');
       const failure=await account('runtime-failure');
       for(const stage of ['entry','report']) {
         await env.DB.prepare(stage==='entry' ? `CREATE TRIGGER runtime_failure BEFORE INSERT ON entries WHEN NEW.account_id='runtime-failure' AND NEW.value=-4100 BEGIN SELECT RAISE(ABORT,'synthetic failure'); END` : `CREATE TRIGGER runtime_failure BEFORE INSERT ON import_batches WHEN NEW.account_id='runtime-failure' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END`).run();
