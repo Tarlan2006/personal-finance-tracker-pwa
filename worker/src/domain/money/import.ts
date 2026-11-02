@@ -1,5 +1,6 @@
 import { HttpError, type Store } from '../../env';
 import { now, sha256, uuid } from '../../util';
+import { bankPdf } from './bank-pdf';
 import { parseCsv } from './csv';
 import { normName, parseAmountMinor, parseDateMs } from './normalize';
 import { insertStatements, normalizeTx } from './entries';
@@ -8,7 +9,7 @@ import type { TxPayload } from '../../../../shared/types';
 
 export interface Mapping {
   bank?: string; delimiter?: string; hasHeader?: boolean;
-  dateCol: number; counterpartyCol?: number; noteCol?: number;
+  dateCol: number; rejectionCol?: number; counterpartyCol?: number; noteCol?: number;
   /** Вариант 1: одна колонка суммы; минус = расход, плюс = доход */
   amountCol?: number;
   /** Вариант 2: отдельные колонки списания/зачисления */
@@ -17,12 +18,12 @@ export interface Mapping {
   directionCol?: number; inValues?: string[]; outValues?: string[];
 }
 
-/** Профили банков. Появятся после получения реальных образцов выписок — см. DECISIONS.md. */
+/** Профили проверенных макетов; ограничения — раздел «Профили банков» в DECISIONS.ru.md. */
 export const BANK_PROFILES: Record<string, { title: string; ready: boolean; mapping?: Mapping }> = {
   generic: { title: 'Универсальный CSV (ручная привязка колонок)', ready: true },
-  kaspi: { title: 'Kaspi — ждёт образец выписки', ready: false },
-  halyk: { title: 'Halyk — ждёт образец выписки', ready: false },
-  freedom: { title: 'Freedom — ждёт образец выписки', ready: false },
+  kaspi: { title: 'Kaspi Gold / депозит (PDF)', ready: true },
+  halyk: { title: 'Halyk (PDF)', ready: true },
+  freedom: { title: 'Freedom PDF — формат пока не поддержан', ready: false },
 };
 
 export type RowStatus = 'imported' | 'duplicate' | 'rejected';
@@ -51,6 +52,7 @@ export function parseRows(csv: string, m: Mapping): { parsed: Parsed[]; headerLi
     const cell = (c?: number) => (Number.isInteger(c) ? (r[c as number] ?? '') : '').trim();
     const preview = r.join(' | ').slice(0, 140);
     if (r.every(c => !c.trim())) { parsed.push({ line, reject: 'пустая строка', preview }); continue; }
+    if (cell(m.rejectionCol)) { parsed.push({ line, reject: cell(m.rejectionCol), preview }); continue; }
     const occurredAt = parseDateMs(cell(m.dateCol));
     if (occurredAt === null) { parsed.push({ line, reject: `не распознана дата «${cell(m.dateCol)}»`, preview }); continue; }
     let direction: 'in' | 'out' | null = null; let minor: number | null = null;
@@ -82,11 +84,14 @@ export function parseRows(csv: string, m: Mapping): { parsed: Parsed[]; headerLi
 }
 
 /** Инвариант: imported + duplicates + rejected === total. Ни одна строка не теряется молча. */
-export async function runImport(store: Store, accountId: string, input: { csv: string; filename?: string; mapping: Mapping; dryRun?: boolean }): Promise<ImportReport> {
-  if (typeof input.csv !== 'string' || !input.csv.trim()) throw new HttpError(400, 'empty_file', 'Файл пустой');
-  const bank = input.mapping?.bank ?? 'generic';
-  if (!BANK_PROFILES[bank]?.ready) throw new HttpError(400, 'profile_not_ready', 'Для этого банка ещё нет профиля: нужен образец выписки');
-  const { parsed } = parseRows(input.csv, input.mapping);
+export async function runImport(store: Store, accountId: string, input: { csv?: string; pdfBase64?: string; bank?: string; filename?: string; mapping?: Mapping; dryRun?: boolean }): Promise<ImportReport> {
+  const bank = input.bank ?? input.mapping?.bank ?? 'generic';
+  if (!BANK_PROFILES[bank]?.ready) throw new HttpError(400, 'profile_not_ready', 'Этот формат банка пока не поддержан');
+  const csv = bank !== 'generic' ? await bankPdf(input.pdfBase64 ?? '', bank) : input.csv;
+  if (typeof csv !== 'string' || !csv.trim()) throw new HttpError(400, 'empty_file', 'Файл пустой');
+  if (new TextEncoder().encode(csv).length > 3 * 1024 * 1024) throw new HttpError(413, 'file_too_large', 'Файл слишком большой');
+  const mapping = bank === 'halyk' ? { bank, delimiter: ';', rejectionCol: 6, dateCol: 0, creditCol: 4, debitCol: 5, counterpartyCol: 2, noteCol: 3 } : bank === 'kaspi' ? { bank, delimiter: ';', rejectionCol: 6, dateCol: 0, amountCol: 1, counterpartyCol: 2, noteCol: 3 } : input.mapping!;
+  const { parsed } = parseRows(csv, mapping);
   const report: ImportReport = { total: parsed.length, imported: 0, duplicates: 0, rejected: 0, dryRun: !!input.dryRun, batchId: null, rows: [], newCounterparties: [] };
   const good = parsed.filter(p => p.payload);
   for (const p of parsed) if (p.reject) { report.rejected++; report.rows.push({ line: p.line, status: 'rejected', reason: p.reject, preview: p.preview }); }
@@ -114,8 +119,8 @@ export async function runImport(store: Store, accountId: string, input: { csv: s
     }
   }
   for (const c of keys) {
-    if (dupLines.has(c.p.line)) { report.duplicates++; report.rows.push({ line: c.p.line, status: 'duplicate', preview: c.p.preview }); }
-    else report.imported++;
+    if (dupLines.has(c.p.line)) { report.duplicates++; report.rows.push({ line: c.p.line, status: 'duplicate', reason: 'операция уже импортирована', preview: c.p.preview }); }
+    else { report.imported++; report.rows.push({ line: c.p.line, status: 'imported', reason: input.dryRun ? 'готова к импорту' : 'добавлена', preview: c.p.preview }); }
   }
   report.rows.sort((a, b) => a.line - b.line);
   if (report.imported + report.duplicates + report.rejected !== report.total) throw new Error('import invariant violated');

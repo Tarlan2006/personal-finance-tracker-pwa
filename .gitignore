@@ -8,3 +8,5 @@ test-results/
 playwright-report/
 reference/
 .env*
+
+files_for_train/
