@@ -83,6 +83,7 @@ test('импорт CSV: отчёт сходится; назначение кат
   const d = new Date(); const mm = String(d.getMonth() + 1).padStart(2, '0'); const yy = d.getFullYear();
   const csv = `Дата;Сумма;Получатель;Описание\n01.${mm}.${yy};-3 000,00;ИП Мирас;оплата\n02.${mm}.${yy};-4 500,00;ИП Мирас;оплата\n03.${mm}.${yy};-4 500,00;ИП Мирас;оплата\n04.${mm}.${yy};250 000,00;ТОО Альфа;Зарплата\nвчера;5;Z;плохая дата\n`;
   await tab(page, 'Ещё').click(); await page.getByRole('button', { name: /Загрузить выписку/ }).click();
+  await page.getByRole('radio',{name:'Универсальный CSV',exact:true}).check();
   await page.getByLabel('Файл выписки').setInputFiles({ name: 'st.csv', mimeType: 'text/csv', buffer: Buffer.from(csv, 'utf8') });
   await page.getByRole('button', { name: 'Проверить' }).click();
   const rep = page.getByTestId('import-report');
@@ -99,29 +100,38 @@ test('импорт CSV: отчёт сходится; назначение кат
   await expect(page.getByTestId('cat-row').filter({ hasText: 'Магазины' })).toContainText('12 000');
 });
 
-test('PDF Kaspi: загрузка фикстуры → отчёт → получатели', async ({page}) => {
-  await loggedIn(page);
-  await tab(page,'Ещё').click(); await page.getByRole('button',{name:/Загрузить выписку/}).click();
-  await page.getByLabel('Банк').selectOption('kaspi');
-  await page.getByLabel('Файл выписки').setInputFiles('worker/test/fixtures/kaspi/gold.pdf');
+for(const [index,bank,title,imported,rejected,total] of [
+  [0,'halyk','Halyk',2,2,4],[1,'kaspi','Kaspi',2,3,5],[2,'freedom','Freedom',4,3,7]
+] as const) test(`${title} PDF: скачать пример → загрузить → отчёт → операции`,async({page})=>{
+  await loggedIn(page);await tab(page,'Выписка').click();
+  for(const name of ['Halyk PDF','Kaspi PDF','Freedom PDF'])await expect(page.getByRole('radio',{name,exact:true})).toBeVisible();
+  await page.getByRole('radio',{name:title+' PDF',exact:true}).check();
+  const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('link',{name:new RegExp('Скачать пример '+title+' PDF')}).click()]);
+  expect(download.suggestedFilename()).toBe(bank+'.pdf');
+  const fixture=`test-results/upload-${test.info().project.name}-${bank}.pdf`;await download.saveAs(fixture);
+  await page.getByLabel('Файл выписки',{exact:true}).setInputFiles(fixture);
   await expect(page.getByRole('heading',{name:'Колонки'})).toHaveCount(0);
-  await page.getByRole('button',{name:'Проверить'}).click();
-  await expect(page.getByTestId('import-report')).toContainText('Будет добавлено2');
-  await page.getByRole('button',{name:'Импортировать',exact:true}).click();
-  await expect(page.getByTestId('import-report')).toContainText('Добавлено2');
-  await page.getByRole('button',{name:'‹ Ещё'}).click(); await tab(page,'Отчёты').click();
-  await expect(page.getByTestId('cp-row').filter({hasText:'TEST SHOP'})).toBeVisible();
+  await page.getByRole('button',{name:'Проверить',exact:true}).click();const report=page.getByTestId('import-report');
+  await expect(report).toContainText(`Всего строк${total}`);await expect(report).toContainText(`Будет добавлено${imported}`);await expect(report).toContainText(`Отклонено${rejected}`);
+  await page.getByRole('button',{name:'Импортировать',exact:true}).click();await expect(report).toContainText(`Добавлено${imported}`);
+  await page.screenshot({path:`test-results/bank-report-${test.info().project.name}-${bank}.png`});
+  await page.getByRole('button',{name:'Импортировать',exact:true}).click();await expect(report).toContainText('Добавлено0');await expect(report).toContainText(`Уже были (повторы)${imported}`);
+  const count=await page.evaluate(async bank=>(await(await fetch('/api/entries')).json()).items.filter((e:any)=>e.payload.bank===bank).length,bank);expect(count).toBe(imported);
+  await page.getByRole('button',{name:'Посмотреть в Ленте',exact:true}).click();await page.getByLabel('Поиск',{exact:true}).fill('TEST SHOP');
+  await expect(page.getByRole('button',{name:/TEST SHOP/})).toHaveCount(index+1);
+  await tab(page,'Отчёты').click();await expect(page.getByTestId('cp-row').filter({hasText:'TEST SHOP'})).toBeVisible();
 });
 
 test('слишком большая выписка: понятная ошибка без частичного импорта', async ({page}) => {
   await loggedIn(page);
   await tab(page,'Ещё').click(); await page.getByRole('button',{name:/Загрузить выписку/}).click();
-  const csv='date;amount;counterparty\n'+Array.from({length:501},(_,i)=>`01.11.2026;-${i+1};LIMIT-TEST-501`).join('\n');
+  const csv='date;amount;counterparty\n'+Array.from({length:1001},(_,i)=>`01.11.2026;-${i+1};LIMIT-TEST-1001`).join('\n');
+  await page.getByRole('radio',{name:'Универсальный CSV',exact:true}).check();
   await page.getByLabel('Файл выписки').setInputFiles({name:'oversized.csv',mimeType:'text/csv',buffer:Buffer.from(csv,'utf8')});
   await page.getByRole('button',{name:'Импортировать',exact:true}).click();
-  await expect(page.getByRole('alert')).toContainText('Не больше 500 строк');
+  await expect(page.getByRole('alert')).toContainText('Не больше 1000 строк');
   await expect(page.getByTestId('import-report')).toHaveCount(0);
-  const count=await page.evaluate(async()=>{const r=await fetch('/api/entries?q=LIMIT-TEST-501');return (await r.json()).items.length;});
+  const count=await page.evaluate(async()=>{const r=await fetch('/api/entries?q=LIMIT-TEST-1001');return (await r.json()).items.length;});
   expect(count).toBe(0);
 });
 
@@ -220,7 +230,7 @@ test('UI 2.0: док, шторка, быстрые суммы и настоящ�
   await expect(sheet.getByRole('button',{name:'Закрыть',exact:true})).toBeFocused();await page.keyboard.press('Escape');
   await expect(sheet).toHaveCount(0);await expect(fab).toBeFocused();expect(await page.evaluate(()=>document.body.style.overflow)).not.toBe('hidden');
   await tab(page,'Выписка').click();await expect(page.getByRole('heading',{name:'Выписка',exact:true})).toBeVisible();
-  await expect(page.getByLabel('Банк',{exact:true})).toBeVisible();
+  await expect(page.getByRole('group',{name:'Банк',exact:true})).toBeVisible();
 });
 
 test('фильтр ленты находит доход за пределами первой страницы', async ({page}) => {
@@ -264,6 +274,31 @@ test('раскладка: нет горизонтального скролла, 
   expect(await page.evaluate(() => { const i = document.querySelector('input:not([type=file]):not([type=search])') as HTMLInputElement | null; return i ? parseFloat(getComputedStyle(i).fontSize) : 16; })).toBeGreaterThanOrEqual(16);
   expect(await page.evaluate(() => document.querySelector('meta[name=viewport]')!.getAttribute('content'))).toContain('viewport-fit=cover');
   await page.screenshot({ path: `test-results/shot-${test.info().project.name}.png` });
+});
+
+test('прокрутка страницы и шторки восстанавливается после закрытия', async ({page,context})=>{
+  await page.setViewportSize({width:393,height:600});await loggedIn(page);await tab(page,'Ещё').click();
+  expect(await page.evaluate(()=>document.documentElement.scrollHeight>innerHeight)).toBe(true);
+  await page.mouse.move(180,420);await page.mouse.wheel(0,220);
+  await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(40);
+  const cdp=await context.newCDPSession(page);
+  const swipe=async(x:number,from:number,to:number)=>{
+    await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y:from,id:1}]});
+    for(let i=1;i<=8;i++){await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x,y:from+(to-from)*i/8,id:1}]});await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>resolve())));}
+    await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  };
+  await swipe(180,450,200);await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(250);
+  const before=await page.evaluate(()=>scrollY);
+  await page.getByRole('button',{name:'Добавить операцию',exact:true}).click();
+  const sheet=page.getByRole('dialog',{name:'Добавить',exact:true});await expect(sheet).toBeVisible();
+  await sheet.evaluate(el=>Promise.all(el.getAnimations().map(a=>a.finished)));
+  expect(await sheet.evaluate(el=>el.scrollHeight>el.clientHeight)).toBe(true);
+  await swipe(10,480,240);await expect.poll(()=>sheet.evaluate(el=>el.scrollTop)).toBeGreaterThan(20);
+  expect(await page.evaluate(()=>document.body.style.position)).toBe('fixed');
+  await page.keyboard.press('Escape');await expect(sheet).toHaveCount(0);
+  await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThanOrEqual(before-5);
+  await swipe(180,200,460);await expect.poll(()=>page.evaluate(()=>scrollY)).toBeLessThan(before-20);
+  await cdp.detach();
 });
 
 test('смена пароля: старый перестаёт работать (в конце набора)', async ({ page }) => {

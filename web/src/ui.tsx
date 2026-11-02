@@ -1,4 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from 'react';
+import { lockScroll } from './scroll-lock';
 import { api } from './api';
 
 export const fmt = (minor: number) => {
@@ -33,10 +34,9 @@ export function Sheet({ title, onClose, children }: { title: string; onClose: ()
   const restore=useRef(document.activeElement as HTMLElement|null);
   const ref=useRef<HTMLElement>(null), close=useRef(onClose); close.current=onClose;
   useEffect(()=>{
-    const previous=restore.current, overflow=document.body.style.overflow;
-    document.body.style.overflow='hidden';
+    const previous=restore.current, unlock=lockScroll();
     const focus=()=>Array.from(ref.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),a[href],[tabindex="0"]')??[]).filter(el=>el.getClientRects().length);
-    const frame=requestAnimationFrame(()=>{(ref.current?.querySelector<HTMLElement>('[data-autofocus]')??focus()[0]??ref.current)?.focus();});
+    const frame=requestAnimationFrame(()=>{if(!ref.current?.contains(document.activeElement))(ref.current?.querySelector<HTMLElement>('[data-autofocus]')??focus()[0]??ref.current)?.focus({preventScroll:true});});
     const key=(e:KeyboardEvent)=>{
       if(e.key==='Escape'){e.preventDefault();close.current();}
       if(e.key==='Tab') { const items=focus(), first=items[0], last=items[items.length-1];
@@ -46,7 +46,7 @@ export function Sheet({ title, onClose, children }: { title: string; onClose: ()
       }
     };
     window.addEventListener('keydown',key);
-    return ()=>{cancelAnimationFrame(frame);document.body.style.overflow=overflow;window.removeEventListener('keydown',key);requestAnimationFrame(()=>{if(previous?.isConnected)previous.focus();});};
+    return ()=>{cancelAnimationFrame(frame);unlock();window.removeEventListener('keydown',key);requestAnimationFrame(()=>{if(previous?.isConnected)previous.focus({preventScroll:true});});};
   },[]);
   return <><div className="sheet-bg" onClick={onClose} aria-hidden="true" /><section ref={ref} tabIndex={-1} className="sheet" role="dialog" aria-modal="true" aria-label={title}><div className="sheet-handle" aria-hidden="true"/><header className="sheet-heading"><h3>{title}</h3><button className="close-sheet" aria-label="Закрыть" onClick={onClose}>×</button></header>{children}</section></>;
 }

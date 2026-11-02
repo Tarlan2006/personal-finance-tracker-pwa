@@ -194,7 +194,7 @@ function Sync() {
 const GUESS: Record<string, RegExp> = { date: /дата|date/i, amount: /сумма|amount|итого/i, cp: /получател|отправител|контрагент|merchant|название|наименование|recipient|counterparty/i, note: /назначен|описан|детал|комментар|details|description|операц/i };
 export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>void; onViewFeed?:()=>void } = {}) {
   const [profiles, setProfiles] = useState<Array<{id: string; title: string; ready: boolean}>>([]);
-  const [bank, setBank] = useState('generic');
+  const [bank, setBank] = useState('kaspi');
   useEffect(() => { api('GET', '/api/import/profiles').then(r => setProfiles(r.profiles)).catch(e => setErr(e.message)); }, []);
   const [file, setFile] = useState<{ name: string; text: string; header: string[]; delim: string; pdfBase64?: string } | null>(null);
   const [m, setM] = useState<{ date: number; amount: number; cp: number; note: number; mode: 'signed' | 'split' | 'dir'; debit: number; credit: number; dirCol: number; inV: string; outV: string }>({ date: 0, amount: 1, cp: -1, note: -1, mode: 'signed', debit: -1, credit: -1, dirCol: -1, inV: '', outV: '' });
@@ -223,8 +223,18 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
   const sel = (label: string, key: 'date' | 'amount' | 'cp' | 'note' | 'debit' | 'credit' | 'dirCol', optional = false) => <Field label={label}><select aria-label={label} value={m[key]} onChange={e => setM({ ...m, [key]: Number(e.target.value) })}>{optional && <option value={-1}>— нет —</option>}{file!.header.map((h, i) => <option key={i} value={i}>{h || `Колонка ${i + 1}`}</option>)}</select></Field>;
   return <>
     <div className="screen-kicker">ИМПОРТ ОПЕРАЦИЙ</div><h1>Выписка</h1><div className="import-hero" aria-hidden="true">↥</div>
-    <p className="muted">Каждая строка файла попадёт в отчёт: добавлена, пропущена как повтор или отклонена с причиной. Kaspi и Halyk: PDF с текстовым слоем. Freedom PDF пока не поддержан. Для других файлов — универсальный CSV. За один раз — до 500 строк (в PDF считаются также продолжения и служебные строки). Большую выписку разделите по датам, не разбивая операции одного дня.</p>
-    <Field label="Банк"><select aria-label="Банк" disabled={busy} value={bank} onChange={e => { setBank(e.target.value); setFile(null); setRep(null); setErr(''); }}>{profiles.filter(p => p.ready).map(p => <option key={p.id} value={p.id}>{p.title}</option>)}</select></Field>
+    <p className="muted">Каждая строка файла попадёт в отчёт: добавлена, пропущена как повтор или отклонена с причиной. Halyk, Kaspi и Freedom: PDF с текстовым слоем. Для других файлов — универсальный CSV. За один раз — до 1000 строк (у Freedom многострочная операция считается одной строкой). Большую выписку разделите по датам, не разбивая операции одного дня.</p>
+    <fieldset className="bank-fieldset" aria-label="Банк" disabled={busy}>
+      <legend>Выберите банк · PDF</legend>
+      <div className="bank-cards">{['halyk','kaspi','freedom'].map(id=>{
+        const profile=profiles.find(p=>p.id===id&&p.ready);if(!profile)return null;
+        const title=id==='halyk'?'Halyk':id==='kaspi'?'Kaspi':'Freedom';
+        return <label key={id} className={'bank-card '+id+(bank===id?' selected':'')}><input type="radio" name="statement-bank" aria-label={title+' PDF'} value={id} checked={bank===id} onChange={()=>{setBank(id);setFile(null);setRep(null);setErr('');}}/><span className="bank-mark" aria-hidden="true">{title[0]}</span><strong>{title}</strong><small>PDF</small></label>;
+      })}</div>
+      <label className="generic-format"><input type="radio" name="statement-bank" aria-label="Универсальный CSV" checked={bank==='generic'} onChange={()=>{setBank('generic');setFile(null);setRep(null);setErr('');}}/>Универсальный CSV</label>
+    </fieldset>
+    {bank!=='generic'&&<a className="sample-download" href={'/examples/'+bank+'.pdf'} download>Скачать пример {bank==='halyk'?'Halyk':bank==='kaspi'?'Kaspi':'Freedom'} PDF · вымышленные данные</a>}
+    {err&&!file&&<div className="err" role="alert">{err}</div>}
     <input disabled={busy} className="statement-file" key={bank} aria-label="Файл выписки" type="file" accept={bank === 'generic' ? ' .csv,.txt,text/csv'.trim() : '.pdf,application/pdf'} onChange={e => pick(e.target.files?.[0])} />
     {file && <>
       {bank === 'generic' && <><h2>Колонки</h2>{sel('Дата', 'date')}

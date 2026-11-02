@@ -1,3 +1,4 @@
+import { MAX_NOTE_LENGTH } from '../../shared/types';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { api, ApiError } from './api';
 import { enqueue, listQueue, removeFromQueue, startQueue, sealQueue, unsealQueue, subscribeQueue, getQueueStatus, type QItem } from './queue';
@@ -167,7 +168,7 @@ export function Add({ onDone }: { onDone: () => void }) {
       <Field label={dir==='out'?'Кому / где':'От кого'}><input aria-label="Получатель" list="cps" value={cp} onChange={e=>setCp(e.target.value)} placeholder="Например: ИП Мирас" maxLength={120}/><datalist id="cps">{counterparties.slice(0,200).map(c=><option key={c.name_norm} value={c.display}/>)}</datalist></Field>
       <Field label="Категория"><div className="category-control">{!cat&&auto&&<span className="auto-badge" data-testid="auto-category">✨ Авто · {auto.name}</span>}<select aria-label="Категория" value={cat} onChange={e=>setCat(e.target.value)}><option value="">{auto?`Автоматически: ${auto.name}`:'Автоматически (по получателю)'}</option>{opts.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div></Field>
       <Field label="Дата"><input aria-label="Дата" type="date" required value={date} onChange={e=>setDate(e.target.value)}/></Field>
-      <Field label="Заметка"><input aria-label="Заметка" value={note} placeholder="Необязательно" maxLength={300} onChange={e=>setNote(e.target.value)}/></Field>
+      <Field label="Заметка"><input aria-label="Заметка" value={note} placeholder="Необязательно" maxLength={MAX_NOTE_LENGTH} onChange={e=>setNote(e.target.value)}/></Field>
     </div>
     {err&&<div className="err" role="alert">{err}</div>}
     <button className="btn" disabled={busy}>{busy?'Сохраняем…':'Сохранить'}</button>
