@@ -98,14 +98,18 @@ route('GET', '/api/import/batches/:id', 'session', async c => json(await imp.get
 route('DELETE', '/api/import/batches/:id', 'session', async c => json(await imp.undoBatch(c.store, acc(c), c.params[0])));
 
 // ---------- «Команды» (ключи) ----------
-function formBody(t: string, ct: string): Record<string, any> {
+async function formBody(t: string, ct: string): Promise<Record<string, any>> {
+  if (ct.includes('multipart/form-data')) { // режим «Форма» в «Командах» отправляет multipart
+    try { const fd = await new Response(t, { headers: { 'content-type': ct } }).formData(); const o: Record<string, any> = {}; fd.forEach((v, k) => { if (typeof v === 'string') o[k] = v; }); return o; }
+    catch { throw new HttpError(400, 'bad_form', 'Не удалось разобрать форму'); }
+  }
   if (ct.includes('application/json')) { try { return JSON.parse(t || '{}'); } catch { throw new HttpError(400, 'bad_json', 'Некорректный JSON'); } }
   return Object.fromEntries(new URLSearchParams(t));
 }
 route('POST', '/api/shortcuts/add', 'key', async c => {
   if (c.auth!.keyScope !== 'write') throw new HttpError(403, 'wrong_scope', 'Этот ключ только для чтения, нужен ключ записи');
   await rateLimit(c.store, 'key:' + c.auth!.keyId, 60, 60_000);
-  const f = formBody(await readBody(c.req, 4096), c.req.headers.get('content-type') ?? '');
+  const f = await formBody(await readBody(c.req, 4096), c.req.headers.get('content-type') ?? '');
   return text(await shortcutAdd(c.store, acc(c), f, c.req.headers.get('idempotency-key')));
 });
 route('GET', '/api/shortcuts/summary', 'key', async c => {
