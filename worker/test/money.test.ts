@@ -187,9 +187,9 @@ describe('импорт: ни одна строка не теряется', () =>
     const b = (await call(env, 'POST', '/api/import', { cookie: o, body: { csv: 'd,s,t\n01.11.2026,100,Покупка\n02.11.2026,250,Пополнение\n03.11.2026,9,Что-то\n', mapping: { dateCol: 0, amountCol: 1, directionCol: 2, outValues: ['Покупка'], inValues: ['Пополнение'] } } })).data;
     expect([b.imported, b.rejected]).toEqual([2, 1]);
   });
-  it('профили Kaspi/Halyk/Freedom честно отклоняются, пока нет образцов', async () => {
+  it('неподдержанный профиль Freedom отклоняется', async () => {
     const { env, o } = await setup();
-    const r = await call(env, 'POST', '/api/import', { cookie: o, body: { csv: CSV, mapping: { ...MAP, bank: 'kaspi' } } });
+    const r = await call(env, 'POST', '/api/import', { cookie: o, body: { csv: CSV, mapping: { ...MAP, bank: 'freedom' } } });
     expect(r.status).toBe(400); expect(r.data.error).toBe('profile_not_ready');
   });
   it('отчёт по месяцу и экспорт CSV содержат все импортированные строки', async () => {
