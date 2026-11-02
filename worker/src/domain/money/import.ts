@@ -59,6 +59,7 @@ export function parseRows(csv: string, m: Mapping): { parsed: Parsed[]; headerLi
     if (hasSplit) {
       const d = cell(m.debitCol) ? parseAmountMinor(cell(m.debitCol)) : null;
       const c = cell(m.creditCol) ? parseAmountMinor(cell(m.creditCol)) : null;
+      if ((cell(m.debitCol) && d === null) || (cell(m.creditCol) && c === null)) { parsed.push({ line, reject: 'не распознана сумма списания или зачисления', preview }); continue; }
       if (d && c) { parsed.push({ line, reject: 'заполнены и списание, и зачисление', preview }); continue; }
       if (d) { direction = 'out'; minor = Math.abs(d); } else if (c) { direction = 'in'; minor = Math.abs(c); }
       else { parsed.push({ line, reject: 'нет суммы (или она нулевая/нераспознана)', preview }); continue; }
@@ -72,6 +73,7 @@ export function parseRows(csv: string, m: Mapping): { parsed: Parsed[]; headerLi
         else { parsed.push({ line, reject: `неизвестное направление «${cell(m.directionCol)}»`, preview }); continue; }
       } else direction = a < 0 ? 'out' : 'in';
     }
+    if (cell(m.counterpartyCol).length > 120 || cell(m.noteCol).length > 300) { parsed.push({ line, reject: 'слишком длинное имя или описание; требуется ручная проверка', preview }); continue; }
     let norm;
     try {
       norm = normalizeTx({ direction, amountMinor: minor!, occurredAt, counterparty: cell(m.counterpartyCol), note: cell(m.noteCol), bank: m.bank });
@@ -85,6 +87,7 @@ export function parseRows(csv: string, m: Mapping): { parsed: Parsed[]; headerLi
 
 /** Инвариант: imported + duplicates + rejected === total. Ни одна строка не теряется молча. */
 export async function runImport(store: Store, accountId: string, input: { csv?: string; pdfBase64?: string; bank?: string; filename?: string; mapping?: Mapping; dryRun?: boolean }): Promise<ImportReport> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'bad_import', 'Нужен объект параметров импорта');
   const bank = input.bank ?? input.mapping?.bank ?? 'generic';
   if (!BANK_PROFILES[bank]?.ready) throw new HttpError(400, 'profile_not_ready', 'Этот формат банка пока не поддержан');
   const csv = bank !== 'generic' ? await bankPdf(input.pdfBase64 ?? '', bank) : input.csv;

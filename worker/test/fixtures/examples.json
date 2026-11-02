@@ -1,0 +1,15 @@
+{
+  "purpose": "Синтетические эталоны для детерминированных правил и регрессионных тестов. Не обучение модели.",
+  "privateSources": "Исходные PDF остаются только в игнорируемой files_for_train/; не прикладывать их к внешним сервисам.",
+  "cases": [
+    {"id":"kaspi-gold", "fixture":"kaspi/gold.pdf", "bank":"kaspi", "format":"PDF", "date":"Күні", "amount":"Сомасы: знак определяет направление", "counterparty":"Толығырақ и продолжения", "ignoreForAmount":"тип операции", "expected":{"imported":2,"duplicates":0,"rejected":3,"total":5}},
+    {"id":"kaspi-deposit", "fixture":"kaspi/deposit.pdf", "bank":"kaspi", "format":"PDF", "date":"Күні", "amount":"Сомасы: знак определяет направление", "counterparty":"Толық ақпарат и продолжения", "ignoreForAmount":"Депозитте: остаток, не операция", "expected":{"imported":2,"duplicates":0,"rejected":3,"total":5}},
+    {"id":"halyk", "fixture":"halyk/statement.pdf", "bank":"halyk", "format":"PDF", "date":"первая дата: Date of transaction", "amount":"Credit in account currency либо Debit in account currency", "counterparty":"Transaction description и продолжения без догадок", "ignoreForAmount":"Transaction amount, остаток, Fee; комиссию отдельно не создавать", "expected":{"imported":2,"duplicates":0,"rejected":2,"total":4}},
+    {"id":"freedom", "bank":"freedom", "format":"PDF", "ready":false, "reason":"Не подтверждено надёжное связывание многострочных деталей с датой и блокировками; не подменять универсальным CSV"}
+  ],
+  "expectedOperations": [
+    {"dateLocal":"2026-11-01", "utc":"2026-11-01T07:00:00.000Z", "direction":"out", "amountMinor":12345, "counterparty":"TEST SHOP"},
+    {"dateLocal":"2026-11-02", "utc":"2026-11-02T07:00:00.000Z", "direction":"in", "amountMinor":67890, "counterparty":"TEST SENDER CONTINUATION"}
+  ],
+  "replay":"Повторный импорт каждой поддержанной фикстуры: imported=0, duplicates=2; rejected без изменений."
+}

@@ -272,3 +272,25 @@ describe('«Команды»: ключи', () => {
     expect(s.data).toMatch(/расходы 1 500 ₸/); expect(s.data).toContain('Магазины');
   });
 });
+
+
+describe('аудит импорта: повреждённые и неоднозначные строки', () => {
+  it('повреждённый дебет нельзя превращать в доход из кредитной колонки', async () => {
+    const {env,o} = await setup();
+    const r = await call(env,'POST','/api/import',{cookie:o,body:{csv:'date;debit;credit;name\n01.11.2026;BROKEN;123;TEST',mapping:{dateCol:0,debitCol:1,creditCol:2,counterpartyCol:3}}});
+    expect(r.data).toMatchObject({imported:0,rejected:1,total:1});
+    expect((await call(env,'GET','/api/entries',{cookie:o})).data.items).toEqual([]);
+  });
+  it('длинные описания не обрезаются молча и не создают ложных дублей', async () => {
+    const {env,o} = await setup();
+    const r = await call(env,'POST','/api/import',{cookie:o,body:{csv:'date;amount;name;note\n01.11.2026;-123;TEST;'+ 'X'.repeat(301),mapping:{dateCol:0,amountCol:1,counterpartyCol:2,noteCol:3}}});
+    expect(r.data).toMatchObject({imported:0,rejected:1,total:1});
+    expect(r.data.rows[0].reason).toContain('слишком длинное');
+  });
+});
+
+
+it('аудит: null и массив вместо параметров импорта → 400', async () => {
+  const {env,o} = await setup();
+  for (const body of [null, []]) expect((await call(env,'POST','/api/import',{cookie:o,body})).status).toBe(400);
+});

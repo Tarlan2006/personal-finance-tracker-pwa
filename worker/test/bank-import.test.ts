@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { it, expect } from 'vitest';
 import { addAccount, call, loginAs, makeEnv } from './helpers';
 
+const examples = JSON.parse(readFileSync('worker/test/fixtures/examples.json','utf8'));
+
 for (const [bank, file] of [['kaspi','gold'],['kaspi','deposit'],['halyk','statement']]) {
   it(`${bank}/${file}: PDF, повтор, отчёт и изоляция`, async () => {
     const {env,store} = makeEnv(); await addAccount(store,'owner'); await addAccount(store,'other');
@@ -9,7 +11,7 @@ for (const [bank, file] of [['kaspi','gold'],['kaspi','deposit'],['halyk','state
     const body = { bank, pdfBase64: readFileSync(`worker/test/fixtures/${bank}/${file}.pdf`).toString('base64') };
     for (const dryRun of [true,false]) {
       const r = await call(env,'POST','/api/import',{cookie:o,body:{...body,dryRun}});
-      expect(r.status).toBe(200); expect(r.data).toMatchObject({imported:2,duplicates:0,rejected:bank === 'kaspi' ? 3 : 2,total:bank === 'kaspi' ? 5 : 4});
+      expect(r.status).toBe(200); expect(r.data).toMatchObject(examples.cases.find((c:any) => c.fixture === `${bank}/${file}.pdf`).expected);
       if (bank === 'kaspi') expect(r.data.rows.some((r:any) => r.reason === 'операция не завершена')).toBe(true);
       expect(r.data.rows).toHaveLength(r.data.total);
       expect(r.data.imported+r.data.duplicates+r.data.rejected).toBe(r.data.total);
