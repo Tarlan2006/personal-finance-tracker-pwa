@@ -7,7 +7,7 @@ export async function measureSession() {
   const rec = async (step: string, p: Promise<{ headers: Headers }>) => { const r = await p; if ((r as any).status >= 400) throw new Error(`Failed measured request: ${step}`); rows.push({ step, ops: Number(r.headers.get('x-storage-ops')) }); return r as any; };
   const login = await rec('POST /api/auth/login', call(env, 'POST', '/api/auth/login', { body: { login: 'owner', password: 'correct-horse-battery', device: 't' } }));
   const cookie = (login.headers.get('set-cookie') ?? '').split(';')[0];
-  await rec('GET /api/accounts (экран входа)', call(env, 'GET', '/api/accounts'));
+  await rec('GET /api/accounts (свой аккаунт)', call(env, 'GET', '/api/accounts',{cookie}));
   await rec('GET /api/me', call(env, 'GET', '/api/me', { cookie }));
   await rec('GET /api/categories', call(env, 'GET', '/api/categories', { cookie }));
   await rec('GET /api/financial-profile', call(env,'GET','/api/financial-profile',{cookie}));

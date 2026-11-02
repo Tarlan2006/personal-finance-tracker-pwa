@@ -6,9 +6,10 @@ import { Icons, applyTheme, savedTheme, setState, useAppState, Sheet } from './u
 import { Add, Feed, Login, afterLogin } from './screens1';
 import { Import, More, Reports } from './screens2';
 import { FinancialQuestionnaire } from './onboarding';
+import { stopQueue } from './queue';
 
 applyTheme(savedTheme());
-setUnauthorizedHandler(() => setState({ login: null, ready: true, financialProfile:null }));
+setUnauthorizedHandler(() => {stopQueue();setState({ login: null, name:'',queueKey:'',cats:[],ready: true, financialProfile:null,onboardingRequired:false });});
 
 const TABS = [['feed', 'Лента', Icons.feed], ['reports', 'Отчёты', Icons.chart], ['import', 'Выписка', Icons.upload], ['more', 'Ещё', Icons.more]] as const;
 

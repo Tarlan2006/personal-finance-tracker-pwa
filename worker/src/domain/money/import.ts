@@ -40,9 +40,14 @@ interface Parsed { line: number; payload?: TxPayload; occurredAt?: number; key?:
 
 export function parseRows(csv: string, m: Mapping): { parsed: Parsed[]; headerLine: number | null } {
   if (!m || !Number.isInteger(m.dateCol)) throw new HttpError(400, 'bad_mapping', 'Не указана колонка даты');
+  for(const key of ['dateCol','amountCol','debitCol','creditCol','directionCol','counterpartyCol','noteCol','rejectionCol'] as const){const v=m[key];if(v!==undefined&&(!Number.isInteger(v)||v<0||v>255))throw new HttpError(400,'bad_mapping','Колонки должны быть от 0 до 255');}
+  if(m.delimiter!==undefined&&(typeof m.delimiter!=='string'||m.delimiter.length!==1||/[\r\n"]/.test(m.delimiter)))throw new HttpError(400,'bad_mapping','Нужен один символ разделителя');
+  if(m.hasHeader!==undefined&&typeof m.hasHeader!=='boolean')throw new HttpError(400,'bad_mapping','Укажите наличие заголовка');
+  for(const values of [m.inValues,m.outValues])if(values!==undefined&&(!Array.isArray(values)||values.length>40||values.some(v=>typeof v!=='string'||v.length>80)))throw new HttpError(400,'bad_mapping','Некорректные значения направлений');
+  if((m.inValues??[]).some(v=>(m.outValues??[]).map(normName).includes(normName(v))))throw new HttpError(400,'bad_mapping','Доход и расход не могут иметь одинаковое обозначение');
   const hasAmount = Number.isInteger(m.amountCol), hasSplit = Number.isInteger(m.debitCol) || Number.isInteger(m.creditCol);
   if (!hasAmount && !hasSplit) throw new HttpError(400, 'bad_mapping', 'Не указана колонка суммы');
-  const { rows, lines } = parseCsv(csv, m.delimiter);
+  const { rows, lines } = parseCsv(csv, m.delimiter,{rows:MAX_IMPORT_ROWS+(m.hasHeader===false?0:1),columns:256});
   const start = m.hasHeader === false ? 0 : 1;
   if (rows.length - start > MAX_IMPORT_ROWS) throw new HttpError(413, 'too_many_rows', `Не больше ${MAX_IMPORT_ROWS} строк за раз; разделите выписку на части`);
   const seen = new Map<string, number>();
@@ -89,7 +94,10 @@ export function parseRows(csv: string, m: Mapping): { parsed: Parsed[]; headerLi
 /** Инвариант: imported + duplicates + rejected === total. Ни одна строка не теряется молча. */
 export async function runImport(store: Store, accountId: string, input: { csv?: string; pdfBase64?: string; bank?: string; filename?: string; mapping?: Mapping; dryRun?: boolean }): Promise<ImportReport> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'bad_import', 'Нужен объект параметров импорта');
+  for(const key of ['csv','pdfBase64','bank','filename'] as const)if(input[key]!==undefined&&typeof input[key]!=='string')throw new HttpError(400,'bad_import','Некорректные параметры файла');
+  if(input.dryRun!==undefined&&typeof input.dryRun!=='boolean')throw new HttpError(400,'bad_import','dryRun должен быть логическим значением');
   const bank = input.bank ?? input.mapping?.bank ?? 'generic';
+  if(typeof bank!=='string')throw new HttpError(400,'bad_import','Некорректный банк');
   if (!BANK_PROFILES[bank]?.ready) throw new HttpError(400, 'profile_not_ready', 'Этот формат банка пока не поддержан');
   const csv = bank !== 'generic' ? await bankPdf(input.pdfBase64 ?? '', bank) : input.csv;
   if (typeof csv !== 'string' || !csv.trim()) throw new HttpError(400, 'empty_file', 'Файл пустой');

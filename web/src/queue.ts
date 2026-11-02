@@ -29,16 +29,20 @@ const metaPut = (k: string, v: unknown) => tx('meta', 'readwrite', s => { s.put(
 let status: QStatus = { count: 0, failed: 0, lastAttemptAt: null, lastResult: 'ещё не отправляли', nextAttemptAt: null, online: typeof navigator === 'undefined' ? true : navigator.onLine };
 const subs = new Set<() => void>();
 const emit = () => subs.forEach(f => f());
+const storageFailure=()=>{status={...status,lastResult:'Локальное хранилище недоступно',nextAttemptAt:null};emit();};
 export const subscribeQueue = (f: () => void) => { subs.add(f); return () => { subs.delete(f); }; };
 export const getQueueStatus = () => status;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let flushing = false;
 let requestedLogin: string | null = null;
 let currentLogin: string | null = null;
+let generation=0;
 
 export const listQueue = async (login: string) => (await getAll()).filter(i => i.login === login).sort((a, b) => b.createdAt - a.createdAt);
 async function refresh(login: string) {
+  if(login!==currentLogin)return;
   const items = await listQueue(login);
+  if(login!==currentLogin)return;
   status = { ...status, count: items.length, failed: items.filter(i => i.status === 'failed').length, online: navigator.onLine }; emit();
 }
 
@@ -55,8 +59,14 @@ export async function retryFailed(login: string) {
 }
 
 export function startQueue(login: string) {
-  currentLogin = login; refresh(login);
+  if(currentLogin!==login)stopQueue();
+  currentLogin = login; void refresh(login).catch(storageFailure);
   flush(login);
+}
+export function stopQueue(){
+  generation++;currentLogin=null;requestedLogin=null;
+  if(timer){clearTimeout(timer);timer=null;}
+  status={...status,count:0,failed:0,nextAttemptAt:null};emit();
 }
 const onOnline = () => { if (currentLogin) flush(currentLogin); };
 const onVisible = () => { if (document.visibilityState === 'visible' && currentLogin) flush(currentLogin); };
@@ -76,16 +86,21 @@ let backoff = 5000;
 
 /** Отправляет очередь пачками по 50 через /api/entries/batch. Без постоянного опроса: следующая попытка только после сбоя. */
 export async function flush(login: string): Promise<void> {
+  if(login!==currentLogin)return;
   if (flushing) { requestedLogin = login; return; } flushing = true;
+  const activeGeneration=generation,isCurrent=()=>activeGeneration===generation&&login===currentLogin;
   try {
     const items = (await listQueue(login)).filter(i => i.status === 'pending').sort((a, b) => a.createdAt - b.createdAt);
+    if(!isCurrent())return;
     if (!items.length) { status = { ...status, nextAttemptAt: null }; await refresh(login); return; }
     if (!navigator.onLine) { status = { ...status, lastResult: 'нет сети — отправим при возвращении онлайн' }; emit(); return; }
     status = { ...status, lastAttemptAt: Date.now() }; emit();
     for (let i = 0; i < items.length; i += 50) {
+      if(!isCurrent())return;
       const chunk = items.slice(i, i + 50);
       const r: { results: Array<{ id: string; ok: boolean; duplicate?: boolean; error?: string }> } = await api('POST', '/api/entries/batch', { items: chunk.map(c => c.payload) });
       for (const res of r.results) {
+        if(!isCurrent())return;
         const it = chunk.find(c => c.id === res.id); if (!it) continue;
         if (res.ok) await del(it.id); else await put({ ...it, attempts: it.attempts + 1, status: 'failed', lastError: res.error ?? 'отклонено сервером' });
       }
@@ -93,13 +108,15 @@ export async function flush(login: string): Promise<void> {
     backoff = 5000;
     status = { ...status, lastResult: 'успешно', nextAttemptAt: null };
   } catch (e) {
+    if(!isCurrent())return;
+    if(!(e instanceof ApiError)){storageFailure();return;}
     const err = e as ApiError;
     const wait = err.status === 429 ? Math.max(err.retryAfter, 1) * 1000 : err.status === 401 ? 0 : backoff;
     status = { ...status, lastResult: err.status === 401 ? 'нужен вход' : `${err.message}${err.status ? ` (${err.status})` : ''}` };
     if (err.status !== 401 && (err.retryable ?? true)) { schedule(login, wait); backoff = Math.min(backoff * 2, 15 * 60_000); }
-    for (const i of await listQueue(login)) if (i.status === 'pending') await put({ ...i, attempts: i.attempts + 1, lastError: err.message });
+    try{for (const i of await listQueue(login)) if (isCurrent()&&i.status === 'pending') await put({ ...i, attempts: i.attempts + 1, lastError: err.message });}catch{storageFailure();}
   } finally {
-    flushing = false; await refresh(login);
+    flushing = false; if(isCurrent())await refresh(login).catch(storageFailure);
     const requested = requestedLogin; requestedLogin = null;
     // A new enqueue during an active send is an event, not a polling loop.
     // Preserve backoff if the send failed and scheduled a retry.
@@ -113,7 +130,7 @@ async function aesKey(queueKey: string) {
   return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
 export async function sealQueue(login: string, queueKey: string) {
-  if (timer) { clearTimeout(timer); timer = null; }
+  stopQueue();
   const items = await listQueue(login);
   if (!items.length) { await tx('meta', 'readwrite', s => { s.delete('sealed:' + login); }); return 0; }
   const iv = crypto.getRandomValues(new Uint8Array(12));

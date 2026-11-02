@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { api, ApiError, pauseRemainingSec } from './api';
 import { getQueueStatus, subscribeQueue, listQueue, retryFailed, flush } from './queue';
 import { applyTheme, bump, Field, fmt, getState, loadCats, monthLabel, savedTheme, shiftMonth, Sheet, thisMonth, useAppState, type Cat } from './ui';
@@ -22,7 +22,7 @@ export function Reports() {
   const { cats, version } = useAppState();
   const [month, setMonth] = useState(thisMonth()); const [dir, setDir] = useState<'out' | 'in'>('out'); const [s, setS] = useState<Summary | null>(null); const [err, setErr] = useState('');
   const [pick, setPick] = useState<Summary['byCounterparty']['out'][number] | null>(null);
-  useEffect(() => { setErr(''); api('GET', '/api/reports/summary?month=' + month).then(setS).catch(e => setErr(e.message)); }, [month, version]);
+  useEffect(() => { let active=true;setErr('');setS(null); api('GET', '/api/reports/summary?month=' + month).then(r=>{if(active)setS(r);}).catch(e=>{if(active)setErr(e.message);});return ()=>{active=false;}; }, [month, version]);
   const total = s ? s.totals[dir] : 0; const catRows = s?.byCategory[dir] ?? []; const cpRows = s?.byCounterparty[dir] ?? [];
   return <>
     <h1>Отчёты</h1>
@@ -176,7 +176,7 @@ function Password() {
 
 function Sync() {
   const st = useSyncExternalStore(subscribeQueue, getQueueStatus); const { login } = useAppState(); const [items, setItems] = useState<any[]>([]);
-  useEffect(() => { if (login) listQueue(login).then(setItems); }, [login, st.count, st.failed]);
+  useEffect(() => { let active=true;if (login) listQueue(login).then(r=>{if(active)setItems(r);}).catch(()=>{if(active)setItems([]);});return ()=>{active=false;}; }, [login, st.count, st.failed]);
   const fmtT = (t: number | null) => (t ? new Date(t).toLocaleTimeString('ru-RU') : '—');
   return <><h1>Синхронизация</h1><div className="group">
     <div className="row"><span className="grow">Сеть</span><b>{st.online ? 'онлайн' : 'офлайн'}</b></div>
@@ -202,13 +202,16 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
   const [file, setFile] = useState<{ name: string; text: string; header: string[]; delim: string; pdfBase64?: string } | null>(null);
   const [m, setM] = useState<{ date: number; amount: number; cp: number; note: number; mode: 'signed' | 'split' | 'dir'; debit: number; credit: number; dirCol: number; inV: string; outV: string }>({ date: 0, amount: 1, cp: -1, note: -1, mode: 'signed', debit: -1, credit: -1, dirCol: -1, inV: '', outV: '' });
   const [rep, setRep] = useState<any>(null); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+  const [visibleRows,setVisibleRows]=useState(100);const readGeneration=useRef(0);
+  useEffect(()=>()=>{readGeneration.current++;},[]);
   async function pick(f: File | undefined) {
-    if (!f) return; setRep(null); setErr(''); setFile(null);
+    if (!f) return; const generation=++readGeneration.current;setRep(null); setErr(''); setFile(null);
+    try {
     if (f.size > 2 * 1024 * 1024) { setErr('Файл не больше 2 МБ'); return; }
     if (bank !== 'generic') {
       const bytes = new Uint8Array(await f.arrayBuffer()); let binary = '';
       for (const byte of bytes) binary += String.fromCharCode(byte);
-      setFile({ name: f.name, text: '', header: [], delim: ';', pdfBase64: btoa(binary) }); return;
+      if(generation===readGeneration.current)setFile({ name: f.name, text: '', header: [], delim: ';', pdfBase64: btoa(binary) }); return;
     }
     if (/\.pdf$/i.test(f.name)) { setErr('Для PDF выберите банк'); return; }
     const buf = await f.arrayBuffer(); let text = new TextDecoder('utf-8').decode(buf);
@@ -217,12 +220,14 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
     const delim = [';', ',', '\t'].map(d => [d, first.split(d).length] as const).sort((a, b) => b[1] - a[1])[0][0];
     const header = first.split(delim).map(h => h.replace(/^"|"$/g, '').trim());
     const find = (re: RegExp) => header.findIndex(h => re.test(h));
+    if(generation!==readGeneration.current)return;
     setM(x => ({ ...x, date: Math.max(find(GUESS.date), 0), amount: Math.max(find(GUESS.amount), 0), cp: find(GUESS.cp), note: find(GUESS.note) }));
     setFile({ name: f.name, text, header, delim });
+    }catch{if(generation===readGeneration.current)setErr('Не удалось прочитать файл. Выберите его ещё раз');}
   }
   const body = (dryRun: boolean) => ({ bank, pdfBase64: file!.pdfBase64, csv: file!.text, filename: file!.name, dryRun, mapping: { delimiter: file!.delim, hasHeader: true, dateCol: m.date, counterpartyCol: m.cp >= 0 ? m.cp : undefined, noteCol: m.note >= 0 ? m.note : undefined,
     ...(m.mode === 'signed' ? { amountCol: m.amount } : m.mode === 'split' ? { debitCol: m.debit >= 0 ? m.debit : undefined, creditCol: m.credit >= 0 ? m.credit : undefined } : { amountCol: m.amount, directionCol: m.dirCol, inValues: m.inV.split(',').map(s => s.trim()).filter(Boolean), outValues: m.outV.split(',').map(s => s.trim()).filter(Boolean) }) } });
-  async function run(dry: boolean) { setBusy(true); setErr(''); try { const r = await api('POST', '/api/import', body(dry)); setRep(r); if (!dry) { bump(); onImported?.(r.imported); } } catch (e) { setErr((e as ApiError).message); } finally { setBusy(false); } }
+  async function run(dry: boolean) { setBusy(true); setErr(''); try { const r = await api('POST', '/api/import', body(dry)); setRep(r);setVisibleRows(100); if (!dry) { bump(); onImported?.(r.imported); } } catch (e) { setErr((e as ApiError).message); } finally { setBusy(false); } }
   const sel = (label: string, key: 'date' | 'amount' | 'cp' | 'note' | 'debit' | 'credit' | 'dirCol', optional = false) => <Field label={label}><select aria-label={label} value={m[key]} onChange={e => setM({ ...m, [key]: Number(e.target.value) })}>{optional && <option value={-1}>— нет —</option>}{file!.header.map((h, i) => <option key={i} value={i}>{h || `Колонка ${i + 1}`}</option>)}</select></Field>;
   return <>
     <div className="screen-kicker">ИМПОРТ ОПЕРАЦИЙ</div><h1>Выписка</h1><div className="import-hero" aria-hidden="true">↥</div>
@@ -232,9 +237,9 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
       <div className="bank-cards">{['halyk','kaspi','freedom'].map(id=>{
         const profile=profiles.find(p=>p.id===id&&p.ready);if(!profile)return null;
         const title=id==='halyk'?'Halyk':id==='kaspi'?'Kaspi':'Freedom';
-        return <label key={id} className={'bank-card '+id+(bank===id?' selected':'')}><input type="radio" name="statement-bank" aria-label={title+' PDF'} value={id} checked={bank===id} onChange={()=>{setBank(id);setFile(null);setRep(null);setErr('');}}/><span className="bank-mark" aria-hidden="true">{title[0]}</span><strong>{title}</strong><small>PDF</small></label>;
+        return <label key={id} className={'bank-card '+id+(bank===id?' selected':'')}><input type="radio" name="statement-bank" aria-label={title+' PDF'} value={id} checked={bank===id} onChange={()=>{readGeneration.current++;setBank(id);setFile(null);setRep(null);setErr('');}}/><span className="bank-mark" aria-hidden="true">{title[0]}</span><strong>{title}</strong><small>PDF</small></label>;
       })}</div>
-      <label className="generic-format"><input type="radio" name="statement-bank" aria-label="Универсальный CSV" checked={bank==='generic'} onChange={()=>{setBank('generic');setFile(null);setRep(null);setErr('');}}/>Универсальный CSV</label>
+      <label className="generic-format"><input type="radio" name="statement-bank" aria-label="Универсальный CSV" checked={bank==='generic'} onChange={()=>{readGeneration.current++;setBank('generic');setFile(null);setRep(null);setErr('');}}/>Универсальный CSV</label>
     </fieldset>
     {bank!=='generic'&&<a className="sample-download" href={'/examples/'+bank+'.pdf'} download>Скачать пример {bank==='halyk'?'Halyk':bank==='kaspi'?'Kaspi':'Freedom'} PDF · вымышленные данные</a>}
     {err&&!file&&<div className="err" role="alert">{err}</div>}
@@ -251,7 +256,8 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
     {busy && <div className="parsing-state" role="status"><span className="spinner"/>Разбираем файл и проверяем операции…</div>}
     {rep && <><h2>{rep.dryRun ? 'Проверка (ничего не записано)' : 'Готово'}</h2>
       <div className="group" data-testid="import-report"><div className="row"><span className="grow">Всего строк</span><b>{rep.total}</b></div><div className="row"><span className="grow">{rep.dryRun ? 'Будет добавлено' : 'Добавлено'}</span><b>{rep.imported}</b></div><div className="row"><span className="grow">Уже были (повторы)</span><b>{rep.duplicates}</b></div><div className="row"><span className="grow">Отклонено</span><b>{rep.rejected}</b></div></div>
-      {rep.rows.filter((r: any) => r.status !== 'imported').slice(0, 100).map((r: any) => <div className="banner" key={r.line}>Строка {r.line}: {r.status === 'duplicate' ? 'повтор' : r.reason}<div className="sub ell">{r.preview}</div></div>)}
+      {rep.rows.filter((r: any) => r.status !== 'imported').slice(0, visibleRows).map((r: any) => <div className="banner" data-testid="import-row-result" key={r.line}>Строка {r.line}: {r.status === 'duplicate' ? 'повтор' : r.reason}<div className="sub ell">{r.preview}</div></div>)}
+      {rep.rows.filter((r:any)=>r.status!=='imported').length>visibleRows&&<button className="btn sec" onClick={()=>setVisibleRows(n=>n+100)}>Показать ещё строки отчёта</button>}
       {!rep.dryRun && onViewFeed && <button className="btn sec" style={{marginBottom:16}} onClick={onViewFeed}>Посмотреть в Ленте</button>}
       {!rep.dryRun && rep.newCounterparties.length > 0 && <div className="banner">Новых получателей без категории: {rep.newCounterparties.length}. Назначьте категории в «Отчётах».</div>}</>}
   </>;

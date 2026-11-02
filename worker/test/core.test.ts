@@ -44,7 +44,8 @@ describe('аккаунты и сессии', () => {
     const { env, store, local } = makeEnv(); await addAccount(store, 'owner'); await addAccount(store, 'guest');
     local.raw.exec("UPDATE accounts SET disabled = 1 WHERE login = 'guest'");
     expect((await loginAs(env, 'guest')).status).toBe(403);
-    const list = (await call(env, 'GET', '/api/accounts')).data.accounts.map((a: any) => a.login);
+    const owner=await loginAs(env,'owner');
+    const list = (await call(env, 'GET', '/api/accounts',{cookie:owner.cookie})).data.accounts.map((a: any) => a.login);
     expect(list).toEqual(['owner']);
   });
   it('заголовки безопасности и no-store', async () => {

@@ -28,8 +28,8 @@ const assets = {
 } as unknown as Fetcher;
 const env: Env = { DB: local.db, ASSETS: assets };
 
-if (process.env.SEED_ACCOUNT) { // только для локальных/браузерных тестов
-  const [login, password] = process.env.SEED_ACCOUNT.split(':');
+for (const seed of [process.env.SEED_ACCOUNT,...(process.env.SEED_ACCOUNTS??'').split(',')].filter(Boolean)) { // local tests only
+  const [login, password] = seed!.split(':');
   const s = new Store(local.db); const id = await createAccount(s, login, 'Владелец', password); await seedDefaultCategories(s, id);
 }
 

@@ -1,0 +1,15 @@
+{
+  "accounts": [
+    {"bank":"Kaspi","kind":"card","name":"SYNTHETIC K CARD","minor":100000},
+    {"bank":"Kaspi","kind":"deposit","name":"SYNTHETIC K DEPOSIT","minor":200000},
+    {"bank":"Halyk","kind":"card","name":"SYNTHETIC H CARD","minor":300000},
+    {"bank":"Halyk","kind":"deposit","name":"SYNTHETIC H DEPOSIT","minor":400000},
+    {"bank":"Freedom","kind":"card","name":"SYNTHETIC F CARD","minor":500000},
+    {"bank":"Freedom","kind":"deposit","name":"SYNTHETIC F DEPOSIT","minor":600000},
+    {"bank":"Наличные","kind":"cash","name":"SYNTHETIC CASH","minor":700000}
+  ],
+  "expectedOpeningMinor":2800000,
+  "csv":"Дата;Сумма;Контрагент\n01.11.2026;-100,25;AUDIT SYNTHETIC SHOP\n01.11.2026;-100,25;AUDIT SYNTHETIC SHOP\n01.11.2026;1000;AUDIT SYNTHETIC SALARY\n31.02.2026;-1;AUDIT INVALID DATE",
+  "expectedImport":{"total":4,"imported":3,"rejected":1},
+  "expectedTotals":{"in":100000,"out":20050,"net":79950}
+}

@@ -2,6 +2,7 @@
 import { Store } from '../src/env';
 import { runImport, getBatch } from '../src/domain/money/import';
 import { MAX_IMPORT_REPORT_BYTES } from '../src/domain/money/import-limits';
+import { createCategory, updateCategory, deleteCategory } from '../src/domain/money/categories';
 
 type Fixture = {bank:string; pdfBase64:string; expected:{imported:number;rejected:number;total:number}};
 export default {
@@ -20,6 +21,14 @@ export default {
       const mapping={dateCol:0,amountCol:1,counterpartyCol:2};
       const csv=(n:number)=>'date;amount;name\n'+Array.from({length:n},(_,i)=>`01.11.2026;-${i+1};TEST ${i}`).join('\n');
       const other=await account('runtime-other');
+      const sameCategory=await Promise.allSettled([1,2].map(()=>createCategory(store,other,{name:'AUDIT «Ёлка» 😀',type:'expense'})));
+      assert(sameCategory.filter(r=>r.status==='fulfilled').length===1&&sameCategory.filter(r=>r.status==='rejected'&&r.reason.status===409).length===1,'categories: concurrent create');
+      const original=(sameCategory.find(r=>r.status==='fulfilled') as PromiseFulfilledResult<any>).value;
+      const a=await createCategory(store,other,{name:'AUDIT A',type:'expense'}),b=await createCategory(store,other,{name:'AUDIT B',type:'expense'});
+      const renamed=await Promise.allSettled([a,b].map(c=>updateCategory(store,other,c.id,{name:'AUDIT RENAMED'})));
+      assert(renamed.filter(r=>r.status==='fulfilled').length===1&&renamed.filter(r=>r.status==='rejected'&&r.reason.status===409).length===1,'categories: concurrent rename');
+      await deleteCategory(store,other,original.id);const replacement=await createCategory(store,other,{name:original.name,type:'expense'});
+      assert(replacement.id!==original.id,'categories: recreated id does not revive history');
       for(const [i,f] of fixtures.entries()) {
         const id=await account(`runtime-fixture-${i}`);const input={bank:f.bank,pdfBase64:f.pdfBase64};
         const dry=await runImport(store,id,{...input,dryRun:true});assert(dry.imported===f.expected.imported,`fixture ${i}: dryRun`);

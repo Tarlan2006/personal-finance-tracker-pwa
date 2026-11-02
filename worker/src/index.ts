@@ -1,5 +1,5 @@
 import { HttpError, Store, type Env } from './env';
-import { json, text, readJson, readBody, SECURITY_HEADERS, cookie, getCookie } from './util';
+import { json, text, readJson, readBody, parseJsonObject, SECURITY_HEADERS, cookie, getCookie } from './util';
 import * as auth from './auth';
 import { rateLimit } from './ratelimit';
 import * as cats from './domain/money/categories';
@@ -21,7 +21,7 @@ const acc = (c: Ctx) => c.auth!.accountId;
 
 // ---------- Публичные / аккаунт ----------
 route('GET', '/api/health', 'public', async () => json({ ok: true }));
-route('GET', '/api/accounts', 'public', async c => json({ accounts: (await auth.listLogins(c.store)).map(a => ({ login: a.login, name: a.display_name })) }));
+route('GET', '/api/accounts', 'session', async c => json({ accounts: (await c.store.all<any>('SELECT login, display_name FROM accounts WHERE id=? AND disabled=0',acc(c))).map(a => ({ login: a.login, name: a.display_name })) }));
 route('POST', '/api/auth/login', 'public', async c => {
   const ip = c.req.headers.get('cf-connecting-ip') ?? 'local';
   await rateLimit(c.store, 'login:' + ip, 30, 10 * 60_000);
@@ -107,7 +107,7 @@ async function formBody(t: string, ct: string): Promise<Record<string, any>> {
     try { const fd = await new Response(t, { headers: { 'content-type': ct } }).formData(); const o: Record<string, any> = {}; fd.forEach((v, k) => { if (typeof v === 'string') o[k] = v; }); return o; }
     catch { throw new HttpError(400, 'bad_form', 'Не удалось разобрать форму'); }
   }
-  if (ct.includes('application/json')) { try { return JSON.parse(t || '{}'); } catch { throw new HttpError(400, 'bad_json', 'Некорректный JSON'); } }
+  if (ct.includes('application/json')) return parseJsonObject(t);
   return Object.fromEntries(new URLSearchParams(t));
 }
 route('POST', '/api/shortcuts/add', 'key', async c => {
@@ -135,20 +135,21 @@ export async function handleApi(req: Request, env: Env): Promise<Response> {
       throw new HttpError(404, 'not_found', 'Не найдено');
     }
     const { r, m } = match;
+    if(req.method!=='GET'&&(r.mode==='session'||url.pathname==='/api/auth/login')){
+      const origin=req.headers.get('origin');
+      if(origin&&origin!==url.origin)throw new HttpError(403,'bad_origin','Чужой origin');
+      if(req.method!=='DELETE'&&!req.headers.get('content-type')?.includes('json'))throw new HttpError(415,'bad_type','Нужен JSON');
+    }
     let a: auth.AuthCtx | null = null;
     if (r.mode === 'session') {
       a = await auth.sessionFromRequest(store, req);
       if (!a) throw new HttpError(401, 'unauthorized', 'Требуется вход');
-      if (req.method !== 'GET') {
-        const origin = req.headers.get('origin');
-        if (origin && origin !== url.origin) throw new HttpError(403, 'bad_origin', 'Чужой origin');
-        if (req.method !== 'DELETE' && !req.headers.get('content-type')?.includes('json')) throw new HttpError(415, 'bad_type', 'Нужен JSON');
-      }
     } else if (r.mode === 'key') {
       a = await auth.keyFromRequest(store, req);
       if (!a) throw new HttpError(401, 'bad_key', 'Неверный или отозванный ключ');
     }
-    const res = await r.h({ req, url, store, env, auth: a, params: m!.slice(1).map(decodeURIComponent) });
+    let params:string[];try{params=m!.slice(1).map(decodeURIComponent);}catch{throw new HttpError(400,'bad_path','Некорректный адрес');}
+    const res = await r.h({ req, url, store, env, auth: a, params });
     res.headers.set('X-Storage-Ops', String(store.ops));
     return res;
   } catch (e) {
@@ -157,8 +158,8 @@ export async function handleApi(req: Request, env: Env): Promise<Response> {
       body.headers.set('X-Storage-Ops', String(store.ops));
       return body;
     }
-    console.error('unhandled', (e as Error)?.message);
-    return json({ error: 'internal', message: 'Внутренняя ошибка' }, 500);
+    console.error('unhandled request failure');
+    return json({ error: 'internal', message: 'Внутренняя ошибка' }, 500,{'X-Storage-Ops':String(store.ops)});
   }
 }
 

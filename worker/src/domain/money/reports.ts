@@ -1,10 +1,11 @@
-import type { Store } from '../../env';
+import { HttpError, type Store } from '../../env';
 import { loadMeta, effectiveCategory } from './meta';
 import { monthRange, normName } from './normalize';
 import { KIND_TX } from './entries';
 import type { TxPayload } from '../../../../shared/types';
 
 interface Agg { sum: number; count: number }
+function add(a:number,b:number){const result=a+b;if(!Number.isSafeInteger(result))throw new HttpError(422,'total_too_large','Итог месяца превышает точный денежный диапазон; проверьте суммы операций');return result;}
 export async function monthlySummary(store: Store, accountId: string, month: string) {
   const { from, to } = monthRange(month);
   const rows = await store.all<{ payload_json: string }>(
@@ -16,14 +17,14 @@ export async function monthlySummary(store: Store, accountId: string, month: str
   let uncat = { count: 0, sum: 0 };
   for (const r of rows) {
     const p = JSON.parse(r.payload_json) as TxPayload;
-    totals[p.direction] += p.amountMinor; totals.count++;
+    totals[p.direction] = add(totals[p.direction],p.amountMinor); totals.count++;
     const cid = effectiveCategory(meta, p);
     const key = cid ?? '_none';
-    const a = cat[p.direction].get(key) ?? { sum: 0, count: 0 }; a.sum += p.amountMinor; a.count++; cat[p.direction].set(key, a);
-    if (!cid) { uncat.count++; uncat.sum += p.amountMinor; }
+    const a = cat[p.direction].get(key) ?? { sum: 0, count: 0 }; a.sum = add(a.sum,p.amountMinor); a.count++; cat[p.direction].set(key, a);
+    if (!cid) { uncat.count++; uncat.sum = add(uncat.sum,p.amountMinor); }
     const nk = normName(p.counterparty) || '_none';
     const c = cp[p.direction].get(nk) ?? { sum: 0, count: 0, display: p.counterparty || 'Без контрагента' };
-    c.sum += p.amountMinor; c.count++; cp[p.direction].set(nk, c);
+    c.sum = add(c.sum,p.amountMinor); c.count++; cp[p.direction].set(nk, c);
   }
   const catList = (d: 'in' | 'out') => [...cat[d]].map(([id, a]) => {
     const c = meta.cats.get(id);

@@ -10,7 +10,7 @@ Stack: **Cloudflare Workers + D1 (SQLite)**, **React + Vite + TypeScript**. No A
 
 ## Features
 
-- **Statement import (CSV)** with a per-row report: every line is accounted for as *imported*, *duplicate* or *rejected (with reason)*. Re-importing the same file adds nothing; an import can be rolled back as a whole. Column mapping is manual for now (single signed amount, separate debit/credit columns, or a type column).
+- **Statement import (Kaspi/Halyk/Freedom text PDFs and generic CSV)** with a per-row report: every line is accounted for as *imported*, *duplicate* or *rejected (with reason)*. Re-importing the same file adds nothing; an import can be rolled back as a whole. Column mapping is manual for now (single signed amount, separate debit/credit columns, or a type column).
 - **Your own categories.** Create, rename, recolor and delete categories. Assign a payee once (e.g. "Sole proprietor X" → *Groceries*) and the whole history is recategorized. Text rules (e.g. "salary" → *Salary*) for incoming transfers.
 - **Charts and lists** per month: by category (donut + bars) and by payee (count and total).
 - **Manual entry** with an offline queue (IndexedDB, idempotent IDs, retry with backoff and `Retry-After`, encrypted at logout).
@@ -23,16 +23,16 @@ Stack: **Cloudflare Workers + D1 (SQLite)**, **React + Vite + TypeScript**. No A
 Honest list of what is **not** done or **not verified** (details in [docs/STATUS.ru.md](docs/STATUS.ru.md)):
 
 - Not tested on a physical iPhone or in Safari (browser tests run in Chromium with iPhone emulation).
-- Not deployed to Cloudflare by the author yet; server tests run against real SQLite through a D1-compatible adapter.
-- Parsers for specific banks (Kaspi, Halyk, Freedom) are not implemented: they need real statement samples. Only generic CSV import exists.
-- No PDF/XLSX import, no offline edits, no push notifications, single currency (KZT).
+- Published at https://qarjy.tarlan-b06.workers.dev. Destructive crash tests run locally on synthetic data; public smoke tests do not create financial records.
+- Bank PDF parsers support only the layouts verified against local samples; OCR and arbitrary bank layouts are unsupported.
+- No XLSX/OCR, offline edits or push notifications; single currency (KZT). Opening balances remain dated snapshots, separate from transactions.
 
 ## Quick start
 
 ```bash
 npm install
 npm run build
-npm test            # 35 server tests on real SQLite
+npm test            # server/client tests, real SQLite
 npm run test:e2e    # Playwright, iPhone viewport, dark + light
 npm run dev         # local server on http://localhost:8787
 ```
@@ -55,3 +55,7 @@ docs/              design decisions, status, Shortcuts recipes (Russian)
 ## License
 
 MIT
+
+## Client onboarding and audit
+
+Sign in with a login and password; client names are not publicly listed. A five-step questionnaire collects accounts, opening balances, preferred categories, income plans, obligations and a goal. Add a custom expense category directly during onboarding. Answers are account-scoped and can be edited under More. Use Node 24 LTS (see package.json engines). The crash-test protocol and remaining limits are documented in [docs/CRASH_AUDIT.ru.md](docs/CRASH_AUDIT.ru.md).

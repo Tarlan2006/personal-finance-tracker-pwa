@@ -20,6 +20,11 @@ export function validateId(id: unknown): string {
 }
 
 export function normalizeTx(inp: TxInput, nowMs = now()) {
+  if(!inp||typeof inp!=='object'||Array.isArray(inp))throw new HttpError(400,'bad_entry','Нужен объект операции');
+  for(const [key,max] of [['counterparty',120],['note',MAX_NOTE_LENGTH],['title',120],['bank',30],['categoryId',80]] as const){
+    const value=inp[key];if(value!=null&&(typeof value!=='string'||value.length>max))throw new HttpError(400,'bad_field',`Некорректное поле ${key}`);
+  }
+  if(inp.amount!=null&&!['string','number'].includes(typeof inp.amount))throw new HttpError(400,'bad_amount','Некорректная сумма');
   const direction = inp.direction === 'in' || inp.direction === 'out' ? inp.direction : null;
   if (!direction) throw new HttpError(400, 'bad_direction', 'Направление: in (доход) или out (расход)');
   let minor = inp.amountMinor ?? (inp.amount !== undefined ? parseAmountMinor(inp.amount) : null);
@@ -29,8 +34,10 @@ export function normalizeTx(inp: TxInput, nowMs = now()) {
   if (minor > 100_000_000_000_00) throw new HttpError(400, 'bad_amount', 'Слишком большая сумма');
   let occurredAt = nowMs;
   if (inp.occurredAt !== undefined && inp.occurredAt !== null && inp.occurredAt !== '') {
-    const v = typeof inp.occurredAt === 'number' ? inp.occurredAt : (parseDateMs(inp.occurredAt) ?? Date.parse(String(inp.occurredAt)));
-    if (!Number.isFinite(v) || v < Date.UTC(2000, 0, 1) || v > nowMs + 366 * 864e5) throw new HttpError(400, 'bad_date', 'Некорректная дата');
+    const raw=inp.occurredAt;
+    const iso=typeof raw==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(raw)&&parseDateMs(raw.slice(0,10))!==null;
+    const v = typeof raw === 'number' ? raw : (typeof raw==='string'?(parseDateMs(raw) ?? (iso?Date.parse(raw):NaN)):NaN);
+    if (!Number.isSafeInteger(v) || v! < Date.UTC(2000, 0, 1) || v! > nowMs + 366 * 864e5) throw new HttpError(400, 'bad_date', 'Некорректная дата');
     occurredAt = v;
   }
   const payload: TxPayload = {
@@ -63,6 +70,7 @@ export function insertStatements(store: Store, accountId: string, id: string, p:
 }
 
 export async function createTx(store: Store, accountId: string, inp: TxInput, source = 'app'): Promise<{ entry: EntryDTO; duplicate: boolean }> {
+  if(!inp||typeof inp!=='object'||Array.isArray(inp))throw new HttpError(400,'bad_entry','Нужен объект операции');
   const id = validateId(inp.id);
   const { payload, occurredAt } = normalizeTx(inp);
   if (payload.categoryId) await assertCategory(store, accountId, payload.categoryId, payload.direction);
@@ -120,6 +128,8 @@ export async function deleteTx(store: Store, accountId: string, id: string) {
 }
 
 export async function listTx(store: Store, accountId: string, q: URLSearchParams) {
+  for(const key of ['limit','from','to','beforeTime'])if(q.has(key)&&(!q.get(key)?.trim()||!Number.isSafeInteger(Number(q.get(key)))))throw new HttpError(400,'bad_query',`Некорректный параметр ${key}`);
+  if(q.has('beforeTime')!==q.has('beforeId'))throw new HttpError(400,'bad_query','Курсор содержит время и id');
   const limit = Math.min(Math.max(Number(q.get('limit') ?? 100) || 100, 1), 200);
   const where = ['account_id = ?', 'deleted_at IS NULL', 'kind = ?']; const args: unknown[] = [accountId, KIND_TX];
   const from = q.get('from'), to = q.get('to'), search = normName(q.get('q') ?? '');

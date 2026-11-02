@@ -1,5 +1,5 @@
 import { HttpError, type Store } from '../../env';
-import { now, uuid } from '../../util';
+import { now, uuid, sha256 } from '../../util';
 import { normName } from './normalize';
 
 export const DEFAULT_CATEGORIES: Array<{ name: string; type: 'expense' | 'income'; color: string }> = [
@@ -32,10 +32,16 @@ export async function seedDefaultCategories(store: Store, accountId: string) {
 export const listCategories = (store: Store, accountId: string) =>
   store.all('SELECT id, name, type, color, sort FROM categories WHERE account_id = ? AND deleted_at IS NULL ORDER BY type DESC, sort, name', accountId);
 
+type CategoryNameRow={id:string;name:string;type:string;deleted_at:number|null};
+const nameSnapshotSQL='(SELECT json_group_array(json_array(id,name,type,deleted_at)) FROM (SELECT id,name,type,deleted_at FROM categories WHERE account_id=? ORDER BY id))';
+const nameSnapshot=(rows:CategoryNameRow[])=>JSON.stringify(rows.map(r=>[r.id,r.name,r.type,r.deleted_at]));
+const categoryNames=(store:Store,accountId:string)=>store.all<CategoryNameRow>('SELECT id,name,type,deleted_at FROM categories WHERE account_id=? ORDER BY id',accountId);
+
 function clean(body: any, partial = false) {
   const out: any = {};
   if (!partial || body.name !== undefined) {
-    const n = String(body.name ?? '').trim().slice(0, 40);
+    if(typeof body.name!=='string'||body.name.trim().length>40)throw new HttpError(400,'bad_name','Название категории: до 40 символов');
+    const n = body.name.trim();
     if (!n) throw new HttpError(400, 'bad_name', 'Название категории пустое');
     out.name = n;
   }
@@ -51,21 +57,31 @@ function clean(body: any, partial = false) {
 }
 
 export async function createCategory(store: Store, accountId: string, body: any) {
-  const c = clean(body); const id = uuid();
+  const c = clean(body);
   // lower() в SQLite не знает кириллицу — сравниваем в JS
-  const same = await store.all<{ name: string }>('SELECT name FROM categories WHERE account_id=? AND type=? AND deleted_at IS NULL', accountId, c.type);
-  if (same.some(x => normName(x.name) === normName(c.name))) throw new HttpError(409, 'exists', 'Такая категория уже есть');
+  const same = await categoryNames(store,accountId);
+  if (same.some(x => x.deleted_at===null&&x.type===c.type&&normName(x.name) === normName(c.name))) throw new HttpError(409, 'exists', 'Такая категория уже есть');
+  // Concurrent equal names allocate the same free id. Deleted/renamed ids are
+  // never reused, so recreating a category cannot revive old classifications.
+  const occupied=new Set(same.map(x=>x.id));let ordinal=0,id:string;
+  do{id='cat_'+await sha256(`${accountId}|${c.type}|${normName(c.name)}|${ordinal++}`);}while(occupied.has(id));
   const max = await store.first<{ m: number | null }>('SELECT MAX(sort) m FROM categories WHERE account_id=?', accountId);
-  await store.run('INSERT INTO categories (id, account_id, name, type, color, sort, created_at) VALUES (?,?,?,?,?,?,?)',
-    id, accountId, c.name, c.type, c.color ?? '#8e8e93', (max?.m ?? 0) + 1, now());
+  const result=await store.run(`INSERT INTO categories (id, account_id, name, type, color, sort, created_at) SELECT ?,?,?,?,?,?,? WHERE ${nameSnapshotSQL}=? ON CONFLICT(id) DO NOTHING`,
+    id, accountId, c.name, c.type, c.color ?? '#8e8e93', (max?.m ?? 0) + 1, now(),accountId,nameSnapshot(same));
+  if(!result.meta?.changes)throw new HttpError(409,'category_conflict','Список категорий изменился; обновите список и повторите');
   return { id, ...c, color: c.color ?? '#8e8e93' };
 }
 export async function updateCategory(store: Store, accountId: string, id: string, body: any) {
   const c = clean(body, true);
   const sets = Object.keys(c).map(k => `${k} = ?`);
   if (!sets.length) throw new HttpError(400, 'empty', 'Нечего менять');
-  const r = await store.run(`UPDATE categories SET ${sets.join(', ')} WHERE id = ? AND account_id = ? AND deleted_at IS NULL`, ...Object.values(c), id, accountId);
-  if (!r.meta?.changes) throw new HttpError(404, 'not_found', 'Категория не найдена');
+  const rows=await categoryNames(store,accountId);
+  const current=rows.find(r=>r.id===id&&r.deleted_at===null);
+  if(!current)throw new HttpError(404,'not_found','Категория не найдена');
+  const others=rows.filter(r=>r.id!==id&&r.type===(c.type??current.type)&&r.deleted_at===null);
+  if(others.some(x=>normName(x.name)===normName(c.name??current.name)))throw new HttpError(409,'exists','Такая категория уже есть');
+  const r = await store.run(`UPDATE categories SET ${sets.join(', ')} WHERE id = ? AND account_id = ? AND deleted_at IS NULL AND ${nameSnapshotSQL}=?`, ...Object.values(c), id, accountId,accountId,nameSnapshot(rows));
+  if (!r.meta?.changes) throw new HttpError(409, 'category_conflict', 'Список категорий изменился; обновите список и повторите');
 }
 /** Мягкое удаление: записи остаются, становятся «без категории». Привязки и правила на неё снимаются. */
 export async function deleteCategory(store: Store, accountId: string, id: string) {

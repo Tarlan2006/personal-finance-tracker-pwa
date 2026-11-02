@@ -7,9 +7,12 @@ let pausedUntil = 0;
 let onUnauthorized: () => void = () => {};
 export const setUnauthorizedHandler = (f: () => void) => { onUnauthorized = f; };
 const inflight = new Map<string, Promise<any>>();
+let sessionGeneration=0;
 
 async function doFetch<T>(method: string, path: string, body?: unknown): Promise<T> {
-  if (Date.now() < pausedUntil && !path.startsWith('/api/auth/login')) {
+  if(method==='POST'&&(path==='/api/auth/login'||path==='/api/auth/logout')){sessionGeneration++;inflight.clear();if(path==='/api/auth/login')pausedUntil=0;}
+  const generation=sessionGeneration;
+  if (Date.now() < pausedUntil && !['/api/auth/login','/api/auth/logout'].includes(path)) {
     throw new ApiError(429, 'paused', 'Сервер просит подождать', Math.ceil((pausedUntil - Date.now()) / 1000));
   }
   let res: Response;
@@ -20,8 +23,8 @@ async function doFetch<T>(method: string, path: string, body?: unknown): Promise
   if (res.ok) return (res.headers.get('content-type')?.includes('json') ? res.json() : res.text()) as Promise<T>;
   let data: any = {}; try { data = await res.json(); } catch {}
   const retry = Number(res.headers.get('retry-after') ?? 0);
-  if (res.status === 429 && retry) pausedUntil = Date.now() + retry * 1000;
-  if (res.status === 401 && !path.startsWith('/api/auth/login')) onUnauthorized();
+  if (res.status === 429 && retry&&generation===sessionGeneration) pausedUntil = Date.now() + retry * 1000;
+  if (res.status === 401 && !path.startsWith('/api/auth/login')&&generation===sessionGeneration){sessionGeneration++;inflight.clear();onUnauthorized();}
   throw new ApiError(res.status, data.error ?? 'error', data.message ?? `Ошибка ${res.status}`, retry);
 }
 /** GET-запросы с одинаковым путём, идущие одновременно, объединяются в один сетевой вызов. */

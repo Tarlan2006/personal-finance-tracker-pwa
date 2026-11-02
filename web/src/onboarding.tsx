@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FinancialProfile, FinancialProfileRecord } from '../../shared/financial-profile';
 import { api } from './api';
 import { Field, fmt, inputMinor, setState, todayStr, useAppState } from './ui';
+import { CreateCategorySheet } from './category-create';
 
 export const emptyProfile=():FinancialProfile=>({balanceDate:todayStr(),accounts:[],expenseCategoryIds:[],monthlyBudgetMinor:null,incomes:[],obligations:[],householdSize:1,goal:'',goalTargetMinor:null,monthlySavingMinor:null});
 const moneyText=(n:number|null)=>n===null?'':String(n/100).replace('.',',');
@@ -22,6 +23,7 @@ export function FinancialQuestionnaire({record,onDone}:{record:FinancialProfileR
     return {...p,expenseCategoryIds:p.expenseCategoryIds.filter(id=>cats.some(c=>c.id===id&&c.type==='expense')),incomes:p.incomes.map(i=>({...i,categoryId:cats.some(c=>c.id===i.categoryId&&c.type==='income')?i.categoryId:''}))};
   });
   const [version,setVersion]=useState(record.version),[step,setStep]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  const [creatingCategory,setCreatingCategory]=useState(false);
   const heading=useRef<HTMLHeadingElement>(null),form=useRef<HTMLFormElement>(null);
   useEffect(()=>{heading.current?.focus({preventScroll:true});window.scrollTo(0,0);},[step]);
   const patch=(p:Partial<FinancialProfile>)=>setProfile(x=>({...x,...p}));
@@ -57,6 +59,7 @@ export function FinancialQuestionnaire({record,onDone}:{record:FinancialProfileR
       {step===1&&<>
         <p className="muted">Выберите важные категории из вашего списка. Они будут первыми при добавлении операции; остальные категории останутся доступны.</p>
         <div className="group">{expense.map(c=><label className="row questionnaire-choice" key={c.id}><input type="checkbox" checked={profile.expenseCategoryIds.includes(c.id)} onChange={e=>patch({expenseCategoryIds:e.target.checked?[...profile.expenseCategoryIds,c.id]:profile.expenseCategoryIds.filter(id=>id!==c.id)})}/><span className="dot" style={{background:c.color}}/><span>{c.name}</span></label>)}</div>
+        <button type="button" className="btn sec" disabled={profile.expenseCategoryIds.length>=100} onClick={()=>setCreatingCategory(true)}>+ Добавить категорию</button>
         <Money label="План расходов в месяц" value={profile.monthlyBudgetMinor} onChange={v=>patch({monthlyBudgetMinor:v})}/>
         <Field label="На скольких человек ведёте бюджет?"><input aria-label="Человек в бюджете" type="number" min={1} max={30} required value={profile.householdSize} onChange={e=>patch({householdSize:Number(e.target.value)})}/></Field>
       </>}
@@ -92,10 +95,11 @@ export function FinancialQuestionnaire({record,onDone}:{record:FinancialProfileR
         <p className="questionnaire-note">Ответы сохранятся в вашем аккаунте. Их можно изменить в «Ещё → Финансовый профиль». Планы и остатки не создают операций; цели пока не отслеживаются автоматически.</p>
       </>}
       {error&&<div className="err" role="alert">{error}</div>}
-      <div className="questionnaire-actions">{step>0&&<button type="button" className="btn sec" onClick={()=>{setError('');setStep(s=>s-1);}}>Назад</button>}<button className="btn" type="submit">{busy?'Сохраняем…':step===4?'Завершить настройку':'Сохранить и продолжить'}</button></div>
+      <div className="questionnaire-actions">{step>0&&<button type="button" className="btn sec" onClick={()=>{if(form.current?.reportValidity()){setError('');setStep(s=>s-1);}}}>Назад</button>}<button className="btn" type="submit">{busy?'Сохраняем…':step===4?'Завершить настройку':'Сохранить и продолжить'}</button></div>
       <button type="button" className="text-action questionnaire-later" onClick={()=>void save('deferred')}>Сохранить и заполнить позже</button>
       </fieldset>
     </form>
+    {creatingCategory&&<CreateCategorySheet onClose={()=>setCreatingCategory(false)} onCreated={id=>patch({expenseCategoryIds:[...profile.expenseCategoryIds,id]})}/>}
   </div>;
 }
 export function ProfileSummary({profile}:{profile:FinancialProfile}){
@@ -112,7 +116,7 @@ export function ProfileSummary({profile}:{profile:FinancialProfile}){
     <div className="row"><span className="grow">Указанные доходы / месяц</span><span>{fmt(profile.incomes.reduce((n,a)=>n+(a.monthlyMinor??0),0))}</span></div>
     <div className="row"><span className="grow">Указанные платежи / месяц</span><span>{fmt(profile.obligations.reduce((n,a)=>n+(a.monthlyMinor??0),0))}</span></div>
     <div className="row"><span className="grow">Откладывать / месяц</span><span>{profile.monthlySavingMinor===null?'Не указано':fmt(profile.monthlySavingMinor)}</span></div>
-    {profile.goal&&<div className="row"><div><div>Цель: {profile.goal}</div>{profile.goalTargetMinor!==null&&<div className="sub">{fmt(profile.goalTargetMinor)}</div>}</div></div>}
+    {(profile.goal||profile.goalTargetMinor!==null)&&<div className="row"><div><div>Цель: {profile.goal||'Без названия'}</div>{profile.goalTargetMinor!==null&&<div className="sub">{fmt(profile.goalTargetMinor)}</div>}</div></div>}
   </div>;
 }
 export function FinancialProfileScreen(){

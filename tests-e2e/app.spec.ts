@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 
 const PW = 'e2e-test-password-1';
 async function login(page: Page, pw = PW) {
-  await page.goto('/');
+  await page.goto('/');await page.getByLabel('Логин',{exact:true}).fill('owner');
   await page.getByLabel('Пароль').fill(pw);
   await page.getByRole('button', { name: 'Войти' }).click();
   if(pw===PW){
@@ -27,7 +27,7 @@ async function add(page: Page, amount: string, cp: string, dir: 'Расход' |
 test.describe.configure({ mode: 'serial' });
 
 test('стартовая анкета: счета, категории, доходы, цели, повторное открытие',async({page})=>{
-  await page.goto('/');await page.getByLabel('Пароль').fill(PW);await page.getByRole('button',{name:'Войти',exact:true}).click();
+  await page.goto('/');await page.getByLabel('Логин',{exact:true}).fill('owner');await page.getByLabel('Пароль').fill(PW);await page.getByRole('button',{name:'Войти',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Где ваши деньги?'})).toBeVisible();
   await page.getByLabel('Дата начальных остатков').fill('2026-11-01');
   await page.getByRole('button',{name:'+ Halyk',exact:true}).click();

@@ -6,21 +6,21 @@ import { Field, Sheet, bump, dayLabel, fmt, getState, loadCats, setState, todayS
 
 // ---------- Вход ----------
 export function Login() {
-  const [accounts, setAccounts] = useState<Array<{ login: string; name: string }>>([]);
   const [login, setLogin] = useState(''); const [pw, setPw] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
-  useEffect(() => { api('GET', '/api/accounts').then(r => { setAccounts(r.accounts); setLogin(r.accounts[0]?.login ?? ''); }).catch(e => setErr(e.message)); }, []);
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setErr('');
     try {
-      const r = await api('POST', '/api/auth/login', { login, password: pw, device: deviceLabel() });
-      await unsealQueue(login, r.queueKey);
+      const canonicalLogin=login.trim().toLowerCase();
+      const r = await api('POST', '/api/auth/login', { login:canonicalLogin, password: pw, device: deviceLabel() });
+      // A storage permission failure must not block online access or erase the queue.
+      await unsealQueue(canonicalLogin, r.queueKey).catch(()=>{});
       await afterLogin();
     } catch (x) { setErr((x as ApiError).message + ((x as ApiError).retryAfter ? ` (через ${Math.ceil((x as ApiError).retryAfter / 60)} мин)` : '')); } finally { setBusy(false); }
   }
   return <div className="app" style={{ paddingBottom: 24 }}>
     <h1 style={{ marginTop: 56 }}>Қаржы</h1><p className="muted" style={{ marginTop: -8 }}>Войдите в свой аккаунт</p>
     <form onSubmit={submit}>
-      <Field label="Аккаунт"><select aria-label="Аккаунт" value={login} onChange={e => setLogin(e.target.value)}>{accounts.map(a => <option key={a.login} value={a.login}>{a.name}</option>)}</select></Field>
+      <Field label="Логин"><input aria-label="Логин" autoComplete="username" autoCapitalize="none" spellCheck={false} maxLength={32} required value={login} onChange={e=>setLogin(e.target.value)} /></Field>
       <Field label="Пароль"><input aria-label="Пароль" type="password" autoComplete="current-password" value={pw} onChange={e => setPw(e.target.value)} /></Field>
       {err && <div className="err" role="alert">{err}</div>}
       <button className="btn" disabled={busy || !login || !pw}>{busy ? 'Входим…' : 'Войти'}</button>
@@ -76,10 +76,11 @@ export function Feed({ onImport }: {onImport:()=>void}) {
     finally{if(current===generation.current)setLoading(false);}
   },[q,next,filter]);
   useEffect(()=>{const t=setTimeout(()=>load(false),q?250:0);return ()=>{clearTimeout(t);generation.current++;};},[q,version,filter,queueStatus.count]);
-  useEffect(() => { if (login) listQueue(login).then(setPending); }, [login, version, items, queueStatus.count]);
+  useEffect(() => { let active=true;if (login) listQueue(login).then(r=>{if(active)setPending(r);}).catch(()=>{if(active)setPending([]);});return ()=>{active=false;}; }, [login, version, items, queueStatus.count]);
   const groups = useMemo(() => { const g = new Map<string, Entry[]>(); for (const e of items) { if(filter==='auto' ? !!e.payload.categoryId || !e.effectiveCategoryId : filter!=='all' && e.payload.direction!==filter)continue; const k = dayLabel(e.occurredAt); (g.get(k) ?? g.set(k, []).get(k)!).push(e); } return [...g]; }, [items,filter]);
   return <>
     <header className="feed-heading"><div><div className="screen-kicker">QARJY · ВАШИ ФИНАНСЫ</div><h1>Лента</h1></div><button className="header-import" aria-label="Загрузить выписку" onClick={onImport}>{Icons.upload}</button></header>
+    {queueStatus.lastResult==='Локальное хранилище недоступно'&&<div className="banner" role="alert">Локальное хранилище недоступно. Новые операции нельзя сохранить на этом устройстве.</div>}
     <div className="spotlight">{Icons.search}<input aria-label="Поиск" type="search" placeholder="Поиск по получателю и заметке" value={q} onChange={e => setQ(e.target.value)}  /></div>
     <div className="filter-pills" aria-label="Фильтры операций">{([['all','Все'],['out','Расходы'],['in','Доходы'],['auto','✨ Авто-правила']] as const).map(([key,label])=><button key={key} aria-pressed={filter===key} className={filter===key?'active':''} onClick={()=>setFilter(key)}>{label}</button>)}</div>
     <section className="balance-card" aria-label="Сводка за месяц"><div className="balance-label">Баланс · {monthLabel(thisMonth()).replace(/ г\.$/,'')}</div><div className="balance-value" style={{color:summary?.net?summary.net>0?'var(--green)':'var(--red)':undefined}}>{summary ? fmt(summary.net) : '— ₸'}</div><div className="balance-split"><div><span><i className="flow-dot in"/>Доходы</span><strong>{summary?fmt(summary.in):'—'}</strong></div><div><span><i className="flow-dot out"/>Расходы</span><strong>{summary?fmt(summary.out):'—'}</strong></div></div>{pending.length>0&&<small className="muted">Без ожидающих отправки</small>}</section>
@@ -132,6 +133,7 @@ function EditSheet({ e, cats, onClose }: { e: Entry; cats: Cat[]; onClose: () =>
 
 // ---------- Добавить ----------
 export function Add({ onDone }: { onDone: () => void }) {
+  const saving=useRef(false);
   const {cats,login,financialProfile}=useAppState();
   const [dir,setDir]=useState<'out'|'in'>('out'), [amount,setAmount]=useState(''), [cp,setCp]=useState(''),[cat,setCat]=useState('');
   const [note,setNote]=useState(''),[date,setDate]=useState(todayStr()),[err,setErr]=useState(''),[busy,setBusy]=useState(false);
@@ -149,13 +151,13 @@ export function Add({ onDone }: { onDone: () => void }) {
   const rule=rules.find(r=>(r.direction==='any'||r.direction===dir)&&normName(r.pattern)&&hay.includes(normName(r.pattern))&&opts.some(c=>c.id===r.categoryId));
   const auto=bound??opts.find(c=>c.id===rule?.categoryId);
   async function save(e:React.FormEvent) {
-    e.preventDefault();if(busy)return;setErr('');const minor=inputMinor(amount);
+    e.preventDefault();if(saving.current)return;setErr('');const minor=inputMinor(amount);
     if(minor===null||minor<=0){setErr('Введите сумму больше нуля, не более двух знаков после запятой');return;}
-    setBusy(true);
+    saving.current=true;setBusy(true);
     try{
       await enqueue(login!,{id:crypto.randomUUID(),direction:dir,amountMinor:minor,counterparty:cp.trim(),categoryId:cat||null,note:note.trim(),occurredAt:date===todayStr()?Date.now():date});
       bump();onDone();
-    }catch{setErr('Не удалось сохранить на устройстве. Попробуйте ещё раз');setBusy(false);}
+    }catch{saving.current=false;setErr('Не удалось сохранить на устройстве. Попробуйте ещё раз');setBusy(false);}
   }
   function increase(minor:number) {
     const total=(inputMinor(amount)??0)+minor;

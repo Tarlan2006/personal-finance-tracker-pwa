@@ -54,13 +54,24 @@ export function text(body: string, status = 200, headers: Record<string, string>
 export async function readBody(req: Request, maxBytes: number): Promise<string> {
   const len = Number(req.headers.get('content-length') ?? 0);
   if (len > maxBytes) throw new HttpError(413, 'too_large', 'Слишком большое тело запроса');
-  const t = await req.text();
-  if (enc.encode(t).length > maxBytes) throw new HttpError(413, 'too_large', 'Слишком большое тело запроса');
-  return t;
+  if(!req.body)return '';
+  const reader=req.body.getReader(),chunks:Uint8Array[]=[];let size=0;
+  try{while(true){const {value,done}=await reader.read();if(done)break;
+    size+=value.byteLength;
+    if(size>maxBytes){await reader.cancel().catch(()=>{});throw new HttpError(413,'too_large','Слишком большое тело запроса');}
+    chunks.push(value);
+  }}finally{reader.releaseLock();}
+  const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
+  return new TextDecoder().decode(bytes);
+}
+export function parseJsonObject(t:string):Record<string,any>{
+  let value;try{value=JSON.parse(t||'{}');}catch{throw new HttpError(400,'bad_json','Некорректный JSON');}
+  if(!value||typeof value!=='object'||Array.isArray(value))throw new HttpError(400,'bad_json','Нужен JSON-объект');
+  return value;
 }
 export async function readJson<T = any>(req: Request, maxBytes = 64 * 1024): Promise<T> {
   const t = await readBody(req, maxBytes);
-  try { return JSON.parse(t || '{}') as T; } catch { throw new HttpError(400, 'bad_json', 'Некорректный JSON'); }
+  return parseJsonObject(t) as T;
 }
 
 export function cookie(name: string, value: string, maxAgeSec: number): string {

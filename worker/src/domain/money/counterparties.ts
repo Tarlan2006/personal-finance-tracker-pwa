@@ -9,6 +9,7 @@ export async function setCounterpartyCategory(store: Store, accountId: string, i
   const inn = body.categoryInId !== undefined ? body.categoryInId : cp.category_in_id;
   for (const [cid, type] of [[out, 'expense'], [inn, 'income']] as const) {
     if (!cid) continue;
+    if(typeof cid!=='string'||cid.length>80)throw new HttpError(400,'bad_category','Некорректная категория');
     const c = await store.first<{ type: string }>('SELECT type FROM categories WHERE id = ? AND account_id = ? AND deleted_at IS NULL', cid, accountId);
     if (!c || c.type !== type) throw new HttpError(400, 'bad_category', 'Категория не найдена или не того типа');
   }
@@ -18,6 +19,8 @@ export const listCounterparties = (store: Store, accountId: string) =>
   store.all('SELECT id, display, name_norm, category_out_id, category_in_id FROM counterparties WHERE account_id = ? ORDER BY display LIMIT 2000', accountId);
 
 export async function createRule(store: Store, accountId: string, body: any) {
+  if(typeof body.pattern!=='string'||body.pattern.length>120||typeof body.categoryId!=='string')throw new HttpError(400,'bad_rule','Некорректный шаблон или категория');
+  if(body.direction!==undefined&&!['in','out','any'].includes(body.direction))throw new HttpError(400,'bad_rule','Некорректное направление правила');
   const pattern = normName(body.pattern ?? '');
   if (pattern.length < 2) throw new HttpError(400, 'bad_pattern', 'Шаблон не короче 2 символов');
   const direction = ['in', 'out', 'any'].includes(body.direction) ? body.direction : 'any';

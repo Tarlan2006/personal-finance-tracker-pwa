@@ -3,7 +3,7 @@ const origin = (process.argv[2] ?? '').replace(/\/$/, '');
 if (!/^https:\/\//.test(origin)) { console.error('Укажите https-origin'); process.exit(2); }
 const checks = [
   ['GET /api/health', '/api/health', r => r.status === 200],
-  ['GET /api/accounts', '/api/accounts', r => r.status === 200],
+  ['GET /api/accounts без входа → 401', '/api/accounts', r => r.status === 401],
   ['GET /api/entries без входа → 401', '/api/entries', r => r.status === 401],
   ['GET /api/shortcuts/summary без ключа → 401', '/api/shortcuts/summary', r => r.status === 401],
   ['главная страница', '/', r => r.status === 200 && (r.headers.get('content-type') ?? '').includes('text/html')],
