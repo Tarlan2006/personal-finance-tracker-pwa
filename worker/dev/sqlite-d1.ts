@@ -36,7 +36,8 @@ export interface LocalD1 { db: D1Database; raw: DatabaseSync; stmtCount: () => n
 export function createLocalD1(path = ':memory:', migrationsDir?: string): LocalD1 {
   const raw = new DatabaseSync(path);
   raw.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
-  if (migrationsDir) {
+  const has = migrationsDir && raw.prepare("SELECT 1 FROM sqlite_master WHERE name='accounts'").get();
+  if (migrationsDir && !has) {
     for (const f of readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort()) raw.exec(readFileSync(join(migrationsDir, f), 'utf8'));
   }
   const counter = { n: 0 };

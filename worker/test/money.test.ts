@@ -226,6 +226,12 @@ describe('«Команды»: ключи', () => {
     expect(j.data).toContain('доход 2 000,50 ₸');
     expect((await call(env, 'GET', '/api/entries', { cookie: o })).data.items.length).toBe(2);
   });
+  it('режим «Форма» из Команд (multipart) тоже принимается', async () => {
+    const { env, o } = await setup(); const { w } = await keys(env, o);
+    const raw = '--XB\r\nContent-Disposition: form-data; name="amount"\r\n\r\n990\r\n--XB\r\nContent-Disposition: form-data; name="counterparty"\r\n\r\nКофе\r\n--XB--\r\n';
+    const r = await add(env, w.key, raw, {}, 'multipart/form-data; boundary=XB');
+    expect(r.status).toBe(200); expect(r.data).toContain('Кофе');
+  });
   it('write-ключ не читает; read-ключ не пишет; без ключа/мусор/чужой/отозванный → 401', async () => {
     const { env, o, x } = await setup(); const { w, r } = await keys(env, o);
     const sum = (k: string) => call(env, 'GET', '/api/shortcuts/summary', { headers: { authorization: `Bearer ${k}` } });
