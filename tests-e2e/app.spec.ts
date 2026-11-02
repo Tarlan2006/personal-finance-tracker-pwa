@@ -97,6 +97,20 @@ test('импорт CSV: отчёт сходится; назначение кат
   await expect(page.getByTestId('cat-row').filter({ hasText: 'Магазины' })).toContainText('12 000');
 });
 
+test('PDF Kaspi: загрузка фикстуры → отчёт → получатели', async ({page}) => {
+  await loggedIn(page);
+  await tab(page,'Ещё').click(); await page.getByRole('button',{name:/Загрузить выписку/}).click();
+  await page.getByLabel('Банк').selectOption('kaspi');
+  await page.getByLabel('Файл выписки').setInputFiles('worker/test/fixtures/kaspi/gold.pdf');
+  await expect(page.getByRole('heading',{name:'Колонки'})).toHaveCount(0);
+  await page.getByRole('button',{name:'Проверить'}).click();
+  await expect(page.getByTestId('import-report')).toContainText('Будет добавлено2');
+  await page.getByRole('button',{name:'Импортировать',exact:true}).click();
+  await expect(page.getByTestId('import-report')).toContainText('Добавлено2');
+  await page.getByRole('button',{name:'‹ Ещё'}).click(); await tab(page,'Отчёты').click();
+  await expect(page.getByTestId('cp-row').filter({hasText:'TEST SHOP'})).toBeVisible();
+});
+
 test('категории: создать, переименовать, удалить', async ({ page }) => {
   await loggedIn(page);
   await tab(page, 'Ещё').click(); await page.getByRole('button', { name: /Категории и правила/ }).click();

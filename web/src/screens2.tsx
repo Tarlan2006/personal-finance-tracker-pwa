@@ -193,11 +193,21 @@ function Sync() {
 // ---------- Импорт CSV ----------
 const GUESS: Record<string, RegExp> = { date: /дата|date/i, amount: /сумма|amount|итого/i, cp: /получател|отправител|контрагент|merchant|название|наименование|recipient|counterparty/i, note: /назначен|описан|детал|комментар|details|description|операц/i };
 function Import() {
-  const [file, setFile] = useState<{ name: string; text: string; header: string[]; delim: string } | null>(null);
+  const [profiles, setProfiles] = useState<Array<{id: string; title: string; ready: boolean}>>([]);
+  const [bank, setBank] = useState('generic');
+  useEffect(() => { api('GET', '/api/import/profiles').then(r => setProfiles(r.profiles)).catch(e => setErr(e.message)); }, []);
+  const [file, setFile] = useState<{ name: string; text: string; header: string[]; delim: string; pdfBase64?: string } | null>(null);
   const [m, setM] = useState<{ date: number; amount: number; cp: number; note: number; mode: 'signed' | 'split' | 'dir'; debit: number; credit: number; dirCol: number; inV: string; outV: string }>({ date: 0, amount: 1, cp: -1, note: -1, mode: 'signed', debit: -1, credit: -1, dirCol: -1, inV: '', outV: '' });
   const [rep, setRep] = useState<any>(null); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
   async function pick(f: File | undefined) {
-    if (!f) return; setRep(null); setErr('');
+    if (!f) return; setRep(null); setErr(''); setFile(null);
+    if (f.size > 2 * 1024 * 1024) { setErr('Файл не больше 2 МБ'); return; }
+    if (bank !== 'generic') {
+      const bytes = new Uint8Array(await f.arrayBuffer()); let binary = '';
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      setFile({ name: f.name, text: '', header: [], delim: ';', pdfBase64: btoa(binary) }); return;
+    }
+    if (/\.pdf$/i.test(f.name)) { setErr('Для PDF выберите банк'); return; }
     const buf = await f.arrayBuffer(); let text = new TextDecoder('utf-8').decode(buf);
     if (text.includes('�')) text = new TextDecoder('windows-1251').decode(buf);
     text = text.replace(/^﻿/, ''); const first = text.split(/\r?\n/)[0] ?? '';
@@ -207,20 +217,21 @@ function Import() {
     setM(x => ({ ...x, date: Math.max(find(GUESS.date), 0), amount: Math.max(find(GUESS.amount), 0), cp: find(GUESS.cp), note: find(GUESS.note) }));
     setFile({ name: f.name, text, header, delim });
   }
-  const body = (dryRun: boolean) => ({ csv: file!.text, filename: file!.name, dryRun, mapping: { delimiter: file!.delim, hasHeader: true, dateCol: m.date, counterpartyCol: m.cp >= 0 ? m.cp : undefined, noteCol: m.note >= 0 ? m.note : undefined,
+  const body = (dryRun: boolean) => ({ bank, pdfBase64: file!.pdfBase64, csv: file!.text, filename: file!.name, dryRun, mapping: { delimiter: file!.delim, hasHeader: true, dateCol: m.date, counterpartyCol: m.cp >= 0 ? m.cp : undefined, noteCol: m.note >= 0 ? m.note : undefined,
     ...(m.mode === 'signed' ? { amountCol: m.amount } : m.mode === 'split' ? { debitCol: m.debit >= 0 ? m.debit : undefined, creditCol: m.credit >= 0 ? m.credit : undefined } : { amountCol: m.amount, directionCol: m.dirCol, inValues: m.inV.split(',').map(s => s.trim()).filter(Boolean), outValues: m.outV.split(',').map(s => s.trim()).filter(Boolean) }) } });
   async function run(dry: boolean) { setBusy(true); setErr(''); try { const r = await api('POST', '/api/import', body(dry)); setRep(r); if (!dry) bump(); } catch (e) { setErr((e as ApiError).message); } finally { setBusy(false); } }
   const sel = (label: string, key: 'date' | 'amount' | 'cp' | 'note' | 'debit' | 'credit' | 'dirCol', optional = false) => <Field label={label}><select aria-label={label} value={m[key]} onChange={e => setM({ ...m, [key]: Number(e.target.value) })}>{optional && <option value={-1}>— нет —</option>}{file!.header.map((h, i) => <option key={i} value={i}>{h || `Колонка ${i + 1}`}</option>)}</select></Field>;
   return <>
     <h1>Выписка</h1>
-    <p className="muted">Каждая строка файла попадёт в отчёт: добавлена, пропущена как повтор или отклонена с причиной. Готовые профили Kaspi, Halyk и Freedom появятся после образцов выписок; пока — универсальный CSV.</p>
-    <input aria-label="Файл выписки" type="file" accept=".csv,.txt,text/csv" onChange={e => pick(e.target.files?.[0])} />
+    <p className="muted">Каждая строка файла попадёт в отчёт: добавлена, пропущена как повтор или отклонена с причиной. Kaspi и Halyk: PDF с текстовым слоем. Freedom PDF пока не поддержан. Для других файлов — универсальный CSV.</p>
+    <Field label="Банк"><select aria-label="Банк" value={bank} onChange={e => { setBank(e.target.value); setFile(null); setRep(null); setErr(''); }}>{profiles.filter(p => p.ready).map(p => <option key={p.id} value={p.id}>{p.title}</option>)}</select></Field>
+    <input key={bank} aria-label="Файл выписки" type="file" accept={bank === 'generic' ? ' .csv,.txt,text/csv'.trim() : '.pdf,application/pdf'} onChange={e => pick(e.target.files?.[0])} />
     {file && <>
-      <h2>Колонки</h2>{sel('Дата', 'date')}
+      {bank === 'generic' && <><h2>Колонки</h2>{sel('Дата', 'date')}
       <div className="seg"><button className={m.mode === 'signed' ? 'on' : ''} onClick={() => setM({ ...m, mode: 'signed' })}>Сумма со знаком</button><button className={m.mode === 'split' ? 'on' : ''} onClick={() => setM({ ...m, mode: 'split' })}>Две колонки</button><button className={m.mode === 'dir' ? 'on' : ''} onClick={() => setM({ ...m, mode: 'dir' })}>Колонка типа</button></div>
       {m.mode === 'split' ? <>{sel('Списание (расход)', 'debit', true)}{sel('Зачисление (доход)', 'credit', true)}</> : sel('Сумма', 'amount')}
       {m.mode === 'dir' && <>{sel('Колонка типа операции', 'dirCol')}<Field label="Значения дохода (через запятую)"><input aria-label="Значения дохода" value={m.inV} onChange={e => setM({ ...m, inV: e.target.value })} /></Field><Field label="Значения расхода (через запятую)"><input aria-label="Значения расхода" value={m.outV} onChange={e => setM({ ...m, outV: e.target.value })} /></Field></>}
-      {sel('Получатель / отправитель', 'cp', true)}{sel('Описание', 'note', true)}
+      {sel('Получатель / отправитель', 'cp', true)}{sel('Описание', 'note', true)}</>}
       {err && <div className="err" role="alert">{err}</div>}
       <div style={{ display: 'flex', gap: 8 }}><button className="btn sec" disabled={busy} onClick={() => run(true)}>Проверить</button><button className="btn" disabled={busy} onClick={() => run(false)}>Импортировать</button></div>
     </>}

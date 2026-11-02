@@ -1,5 +1,6 @@
 // Локальный сервер: тот же Worker + настоящий SQLite (node:sqlite) + раздача web/dist. Для разработки и браузерных тестов.
 // Запуск: npm run build && npm run dev   (порт PORT, база DB_FILE или в памяти)
+import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, extname } from 'node:path';
@@ -9,7 +10,7 @@ import { Store, type Env } from '../worker/src/env';
 import { createAccount } from '../worker/src/auth';
 import { seedDefaultCategories } from '../worker/src/domain/money/categories';
 
-const root = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+const root = fileURLToPath(new URL('..', import.meta.url));
 const port = Number(process.env.PORT ?? 8787);
 const local = createLocalD1(process.env.DB_FILE ?? ':memory:', join(root, 'migrations'));
 const dist = join(root, 'web/dist');
