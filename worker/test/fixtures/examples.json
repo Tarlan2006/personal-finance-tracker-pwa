@@ -94,6 +94,48 @@
           "counterparty": "TEST SPLIT SENDER"
         }
       ]
+    },
+    {
+      "id": "kaspi-gold-russian",
+      "fixture": "kaspi/gold-russian.pdf",
+      "bank": "kaspi",
+      "format": "PDF",
+      "date": "Дата; dd.MM.yy",
+      "amount": "Сумма; знак и десятичная запятая",
+      "counterparty": "Детали и продолжения",
+      "layout": "Русская шапка; следующие страницы без шапки только после подтверждённой таблицы",
+      "expected": {
+        "imported": 4,
+        "duplicates": 0,
+        "rejected": 6,
+        "total": 10
+      },
+      "expectedOperations": [
+        {
+          "utc": "2026-11-01T07:00:00.000Z",
+          "direction": "out",
+          "amountMinor": 11111,
+          "counterparty": "SYNTHETIC SHOP"
+        },
+        {
+          "utc": "2026-11-02T07:00:00.000Z",
+          "direction": "in",
+          "amountMinor": 22222,
+          "counterparty": "SYNTHETIC SENDER"
+        },
+        {
+          "utc": "2026-11-03T07:00:00.000Z",
+          "direction": "out",
+          "amountMinor": 33333,
+          "counterparty": "SYNTHETIC RECEIVER CONTINUATION"
+        },
+        {
+          "utc": "2026-11-06T07:00:00.000Z",
+          "direction": "out",
+          "amountMinor": 66666,
+          "counterparty": "PAGE TWO SHOP CONTINUED"
+        }
+      ]
     }
   ],
   "expectedOperations": [

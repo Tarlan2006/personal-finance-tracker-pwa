@@ -242,6 +242,7 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
       <label className="generic-format"><input type="radio" name="statement-bank" aria-label="Универсальный CSV" checked={bank==='generic'} onChange={()=>{readGeneration.current++;setBank('generic');setFile(null);setRep(null);setErr('');}}/>Универсальный CSV</label>
     </fieldset>
     {bank!=='generic'&&<a className="sample-download" href={'/examples/'+bank+'.pdf'} download>Скачать пример {bank==='halyk'?'Halyk':bank==='kaspi'?'Kaspi':'Freedom'} PDF · вымышленные данные</a>}
+    {bank==='kaspi'&&<a className="sample-download" href="/examples/kaspi-russian.pdf" download>Пример Kaspi на русском · вымышленные данные</a>}
     {err&&!file&&<div className="err" role="alert">{err}</div>}
     <input disabled={busy} className="statement-file" key={bank} aria-label="Файл выписки" type="file" accept={bank === 'generic' ? ' .csv,.txt,text/csv'.trim() : '.pdf,application/pdf'} onChange={e => pick(e.target.files?.[0])} />
     {file && <>

@@ -359,6 +359,16 @@ test('прокрутка страницы и шторки восстанавли
   await cdp.detach();
 });
 
+test('Kaspi на русском: скачать пример, страницы без шапки, повтор',async({page})=>{
+  await loggedIn(page);await tab(page,'Выписка').click();await page.getByRole('radio',{name:'Kaspi PDF',exact:true}).check();
+  const downloaded=page.waitForEvent('download');await page.getByRole('link',{name:'Пример Kaspi на русском · вымышленные данные',exact:true}).click();const file=await downloaded;const path=test.info().outputPath('kaspi-russian.pdf');await file.saveAs(path);
+  await page.getByLabel('Файл выписки').setInputFiles(path);await page.getByRole('button',{name:'Проверить',exact:true}).click();const report=page.getByTestId('import-report');
+  await expect(report).toContainText('Всего строк10');await expect(report).toContainText('Будет добавлено4');await expect(report).toContainText('Отклонено6');
+  await page.getByRole('button',{name:'Импортировать',exact:true}).click();await expect(report).toContainText('Добавлено4');
+  await page.getByRole('button',{name:'Импортировать',exact:true}).click();await expect(report).toContainText('Добавлено0');await expect(report).toContainText('Уже были (повторы)4');
+  const rows=await page.evaluate(async()=>(await(await fetch('/api/entries?q=PAGE%20TWO%20SHOP%20CONTINUED')).json()).items);expect(rows).toHaveLength(1);expect(rows[0].payload.amountMinor).toBe(66666);
+});
+
 test('смена пароля: старый перестаёт работать (в конце набора)', async ({ page }) => {
   await loggedIn(page);
   await tab(page, 'Ещё').click(); await page.getByRole('button', { name: /Сменить пароль/ }).click();

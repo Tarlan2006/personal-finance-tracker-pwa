@@ -4,7 +4,7 @@ import { addAccount, call, loginAs, makeEnv } from './helpers';
 
 const examples = JSON.parse(readFileSync('worker/test/fixtures/examples.json','utf8'));
 
-for (const [bank, file] of [['kaspi','gold'],['kaspi','deposit'],['halyk','statement'],['freedom','statement']]) {
+for (const [bank, file] of [['kaspi','gold'],['kaspi','deposit'],['halyk','statement'],['freedom','statement'],['kaspi','gold-russian']]) {
   it(`${bank}/${file}: PDF, повтор, отчёт и изоляция`, async () => {
     const {env,store} = makeEnv(); await addAccount(store,'owner'); await addAccount(store,'other');
     const o = (await loginAs(env,'owner')).cookie, x = (await loginAs(env,'other')).cookie;
@@ -37,4 +37,10 @@ it('PDF: размер, неизвестный профиль и повреждё
   const {env,store}=makeEnv();await addAccount(store,'owner');const cookie=(await loginAs(env,'owner')).cookie;
   for(const [body,status] of [[{bank:'kaspi',pdfBase64:'A'.repeat(2800001)},413],[{bank:'kaspi',pdfBase64:'invalid'},400],[{bank:'unknown-bank',pdfBase64:''},400]] as const)
     expect((await call(env,'POST','/api/import',{cookie,body})).status).toBe(status);
+});
+it('Kaspi: продолжение без подтверждённой шапки отклоняется до записи',async()=>{
+  const {env,store}=makeEnv();await addAccount(store,'owner');const cookie=(await loginAs(env,'owner')).cookie;
+  const r=await call(env,'POST','/api/import',{cookie,body:{bank:'kaspi',pdfBase64:readFileSync('worker/test/fixtures/kaspi/gold-russian-unverified.pdf').toString('base64')}});
+  expect(r.status).toBe(400);expect(r.data.error).toBe('unknown_layout');
+  expect((await call(env,'GET','/api/entries',{cookie})).data.items).toEqual([]);
 });

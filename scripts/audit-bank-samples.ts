@@ -82,10 +82,12 @@ for text in texts:
 print(json.dumps({'bank':bank,'rows':rows}))
 `;
 let failures = 0;
-const files = readdirSync('files_for_train').filter(f => /\.pdf$/i.test(f));
+const root=process.argv[2]??'files_for_train';
+const collect=(directory:string):string[]=>readdirSync(directory,{withFileTypes:true}).flatMap(f=>f.isDirectory()?collect(join(directory,f.name)):/\.pdf$/i.test(f.name)?[join(directory,f.name)]:[]);
+const files=collect(root);
 for (const [index, file] of files.entries()) {
   try {
-    const path = join('files_for_train', file);
+    const path = file;
     const child = spawnSync(process.env.AUDIT_PYTHON ?? 'python', ['-c', reference, path], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
     if (child.status !== 0) throw new Error('reference unavailable');
     const ref = JSON.parse(child.stdout) as {bank:string;rows:Array<[string,number]>;total?:number;rejectedCounts?:Record<string,number>};

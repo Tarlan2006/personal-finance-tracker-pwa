@@ -10,3 +10,5 @@ reference/
 .env*
 
 files_for_train/
+
+.codex-attachments/
