@@ -159,7 +159,7 @@ test('импорт CSV: отчёт сходится; назначение кат
 });
 
 for(const [index,bank,title,imported,rejected,total] of [
-  [0,'halyk','Halyk',2,2,4],[1,'kaspi','Kaspi',2,3,5],[2,'freedom','Freedom',4,3,7]
+  [0,'halyk','Halyk',2,0,4],[1,'kaspi','Kaspi',2,1,5],[2,'freedom','Freedom',4,3,7]
 ] as const) test(`${title} PDF: скачать пример → загрузить → отчёт → операции`,async({page})=>{
   await loggedIn(page);await tab(page,'Выписка').click();
   for(const name of ['Halyk PDF','Kaspi PDF','Freedom PDF'])await expect(page.getByRole('radio',{name,exact:true})).toBeVisible();
@@ -363,7 +363,8 @@ test('Kaspi на русском: скачать пример, страницы �
   await loggedIn(page);await tab(page,'Выписка').click();await page.getByRole('radio',{name:'Kaspi PDF',exact:true}).check();
   const downloaded=page.waitForEvent('download');await page.getByRole('link',{name:'Пример Kaspi на русском · вымышленные данные',exact:true}).click();const file=await downloaded;const path=test.info().outputPath('kaspi-russian.pdf');await file.saveAs(path);
   await page.getByLabel('Файл выписки').setInputFiles(path);await page.getByRole('button',{name:'Проверить',exact:true}).click();const report=page.getByTestId('import-report');
-  await expect(report).toContainText('Всего строк10');await expect(report).toContainText('Будет добавлено4');await expect(report).toContainText('Отклонено6');
+  await expect(report).toContainText('Всего строк10');await expect(report).toContainText('Будет добавлено4');await expect(report).toContainText('Отклонено2');await expect(report).toContainText('Служебные строки4');
+  await page.getByRole('button',{name:'Показать служебные строки (4)',exact:true}).click();await expect(page.getByTestId('service-row-result')).toHaveCount(4);await expect(page.getByRole('region',{name:'Отклонённые операции',exact:true})).not.toContainText('SYNTHETIC SERVICE FOOTER');await expect(page.getByRole('region',{name:'Служебные строки',exact:true})).toContainText('SYNTHETIC SERVICE FOOTER');
   await page.getByRole('button',{name:'Импортировать',exact:true}).click();await expect(report).toContainText('Добавлено4');
   await page.getByRole('button',{name:'Импортировать',exact:true}).click();await expect(report).toContainText('Добавлено0');await expect(report).toContainText('Уже были (повторы)4');
   const rows=await page.evaluate(async()=>(await(await fetch('/api/entries?q=PAGE%20TWO%20SHOP%20CONTINUED')).json()).items);expect(rows).toHaveLength(1);expect(rows[0].payload.amountMinor).toBe(66666);

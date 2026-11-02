@@ -52,8 +52,8 @@ export async function bankPdf(base64: string, bank: string): Promise<string> {
       for (const g of groups) {
         if (rows.length >= MAX_IMPORT_ROWS) throw new HttpError(413, 'too_many_rows', `Не больше ${MAX_IMPORT_ROWS} текстовых строк; разделите выписку на части`);
         const c = g.cells.map(a => a.join(' ').trim());
-        // Every extracted text line remains visible in the report. Continuations are
-        // conservatively rejected rather than guessed into another transaction.
+        // Every text line is accounted for. Only lines without operation data can
+        // be service text; malformed dates with signed amounts remain rejections.
         if (/^\d{2}\.\d{2}\.(?:\d{2}|\d{4})$/.test(c[0])) {
           if (bank === 'halyk') rows.push([c[0], '', c[2], c[2], c[4] === 'KZT' ? c[5] : '', c[4] === 'KZT' ? c[6] : '', c[4] === 'KZT' ? '' : 'валюта операции не KZT']);
           else {
@@ -63,15 +63,19 @@ export async function bankPdf(base64: string, bank: string): Promise<string> {
           }
         }
         else {
+          const currencySummary=bank==='halyk'&&c[0]==='KZT'&&!c[2]&&!c[4];
+          const operationData=bank==='halyk'?!currencySummary&&!!((c[0]||c[4]==='KZT')&&[c[5],c[6]].some(s=>/\d[,.]\d{2}(?:\s|$)/.test(s))):/^[+\-−]\s*\d/.test(c[1])||!!(c[1]&&c[2]&&/^(покуп|перевод|пополн|снят|комисс|возврат|оплат|төлем|аудар|толықтыру|алу)/i.test(c[2]));
+          if(operationData){rows.push(['','','',c.filter(Boolean).join(' '),'','','не распознана строка операции: проверьте дату и сумму']);continue;}
           const last = rows.slice().reverse().find(r => r[0]);
           const continuation = bank === 'halyk' ? c[2] : c[3];
-          if (last && continuation && !c[0]) { last[2] += ' ' + continuation; last[3] += ' ' + continuation; }
-          rows.push(['','','',c.filter(Boolean).join(' '),'','','служебная строка или продолжение описания']);
+          const linked=!!(last&&continuation&&!c[0]);
+          if (linked) { last![2] += ' ' + continuation; last![3] += ' ' + continuation; }
+          rows.push(['','','',c.filter(Boolean).join(' '),'','',linked?'продолжение описания (сохранено в операции)':'служебный текст выписки','service']);
         }
       }
     }
     if (!signature || !tables) throw new HttpError(400, 'unknown_layout', 'Не распознана выписка выбранного банка с текстовым слоем');
     if(bank==='freedom')rows.push(...finishFreedomRows(freedom));
-    return 'Дата;Сумма;Контрагент;Описание;Зачисление;Списание;Причина\n' + rows.map(r => r.map(c => '"'+c.replace(/"/g,'""')+'"').join(';')).join('\n');
+    return 'Дата;Сумма;Контрагент;Описание;Зачисление;Списание;Причина;Класс строки\n' + rows.map(r => r.map(c => '"'+c.replace(/"/g,'""')+'"').join(';')).join('\n');
   } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(400, 'bad_pdf', 'Не удалось разобрать PDF'); } finally { await pdf.cleanup(); }
 }

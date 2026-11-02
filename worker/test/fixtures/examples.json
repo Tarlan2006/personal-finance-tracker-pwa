@@ -14,8 +14,9 @@
       "expected": {
         "imported": 2,
         "duplicates": 0,
-        "rejected": 3,
-        "total": 5
+        "rejected": 1,
+        "total": 5,
+        "service": 2
       }
     },
     {
@@ -30,8 +31,9 @@
       "expected": {
         "imported": 2,
         "duplicates": 0,
-        "rejected": 3,
-        "total": 5
+        "rejected": 1,
+        "total": 5,
+        "service": 2
       }
     },
     {
@@ -46,8 +48,9 @@
       "expected": {
         "imported": 2,
         "duplicates": 0,
-        "rejected": 2,
-        "total": 4
+        "rejected": 0,
+        "total": 4,
+        "service": 2
       }
     },
     {
@@ -62,7 +65,8 @@
         "imported": 4,
         "duplicates": 0,
         "rejected": 3,
-        "total": 7
+        "total": 7,
+        "service": 0
       },
       "expectedOperations": [
         {
@@ -107,8 +111,9 @@
       "expected": {
         "imported": 4,
         "duplicates": 0,
-        "rejected": 6,
-        "total": 10
+        "rejected": 2,
+        "total": 10,
+        "service": 4
       },
       "expectedOperations": [
         {
@@ -154,5 +159,5 @@
       "counterparty": "TEST SENDER CONTINUATION"
     }
   ],
-  "replay": "Повтор: imported=0, duplicates=число импортированных операций; rejected не меняется."
+  "replay": "Повтор: imported=0, duplicates=число импортированных операций; rejected и service не меняются."
 }

@@ -4,14 +4,14 @@ import { runImport, getBatch } from '../src/domain/money/import';
 import { MAX_IMPORT_REPORT_BYTES } from '../src/domain/money/import-limits';
 import { createCategory, updateCategory, deleteCategory } from '../src/domain/money/categories';
 
-type Fixture = {bank:string; pdfBase64:string; expected:{imported:number;rejected:number;total:number}};
+type Fixture = {bank:string; pdfBase64:string; expected:{imported:number;rejected:number;service:number;total:number}};
 export default {
   async fetch(req:Request, env:{DB:D1Database}) {
     if(req.method==='GET') return new Response('local import check');
     const checks:string[]=[];
     const assert=(ok:unknown,name:string)=>{if(!ok)throw new Error(name);checks.push(name);};
     try {
-      const {schema,fixtures}=await req.json() as {schema:string[];fixtures:Fixture[]};
+      const {schema,fixtures,serviceBackfill}=await req.json() as {schema:string[];fixtures:Fixture[];serviceBackfill:string};
       for(const sql of schema) await env.DB.prepare(sql).run();
       const store=new Store(env.DB);
       const account=async(id:string)=>{
@@ -21,6 +21,11 @@ export default {
       const mapping={dateCol:0,amountCol:1,counterpartyCol:2};
       const csv=(n:number)=>'date;amount;name\n'+Array.from({length:n},(_,i)=>`01.11.2026;-${i+1};TEST ${i}`).join('\n');
       const other=await account('runtime-other');
+      const legacyRows=[{line:2,status:'imported'},{line:3,status:'rejected',reason:'служебная строка или продолжение описания',preview:'SYNTHETIC FOOTER'},{line:4,status:'rejected',reason:'операция не завершена'}];
+      await store.run("INSERT INTO import_batches (id,account_id,source,filename,created_at,total,imported,duplicates,rejected,report_json) VALUES ('legacy-runtime',?,'kaspi','synthetic.pdf',0,3,1,0,2,?)",other,JSON.stringify(legacyRows));
+      const legacy=await getBatch(store,other,'legacy-runtime');assert(legacy.service===1&&legacy.rejected===1,'legacy report: read compatibility');
+      await store.run(serviceBackfill);const migrated=await store.first<any>("SELECT service,rejected,report_json FROM import_batches WHERE account_id=? AND id='legacy-runtime'",other);
+      assert(migrated.service===1&&migrated.rejected===1&&JSON.parse(migrated.report_json)[1].status==='service'&&await count('entries',other)===0,'legacy report: migration metadata only');
       const sameCategory=await Promise.allSettled([1,2].map(()=>createCategory(store,other,{name:'AUDIT «Ёлка» 😀',type:'expense'})));
       assert(sameCategory.filter(r=>r.status==='fulfilled').length===1&&sameCategory.filter(r=>r.status==='rejected'&&r.reason.status===409).length===1,'categories: concurrent create');
       const original=(sameCategory.find(r=>r.status==='fulfilled') as PromiseFulfilledResult<any>).value;
@@ -33,7 +38,7 @@ export default {
         const id=await account(`runtime-fixture-${i}`);const input={bank:f.bank,pdfBase64:f.pdfBase64};
         const dry=await runImport(store,id,{...input,dryRun:true});assert(dry.imported===f.expected.imported,`fixture ${i}: dryRun`);
         const r=await runImport(store,id,input);
-        assert(r.total===f.expected.total&&r.imported===f.expected.imported&&r.rejected===f.expected.rejected&&r.rows.length===r.total,`fixture ${i}: report`);
+        assert(r.total===f.expected.total&&r.imported===f.expected.imported&&r.rejected===f.expected.rejected&&r.service===f.expected.service&&r.imported+r.duplicates+r.rejected+r.service===r.total&&r.rows.length===r.total,`fixture ${i}: report`);
         assert(JSON.stringify((await getBatch(store,id,r.batchId!)).rows)===JSON.stringify(r.rows),`fixture ${i}: persisted report`);
         const again=await runImport(store,id,input);assert(again.imported===0&&again.duplicates===r.imported,`fixture ${i}: replay`);
         let denied=false;try{await getBatch(store,other,r.batchId!);}catch{denied=true;}assert(denied,`fixture ${i}: isolation`);

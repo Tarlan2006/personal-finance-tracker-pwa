@@ -14,7 +14,12 @@ for (const [bank, file] of [['kaspi','gold'],['kaspi','deposit'],['halyk','state
       expect(r.status).toBe(200); expect(r.data).toMatchObject(examples.cases.find((c:any) => c.fixture === `${bank}/${file}.pdf`).expected);
       if (bank === 'kaspi') expect(r.data.rows.some((r:any) => r.reason === 'операция не завершена')).toBe(true);
       expect(r.data.rows).toHaveLength(r.data.total);
-      expect(r.data.imported+r.data.duplicates+r.data.rejected).toBe(r.data.total);
+      expect(r.data.imported+r.data.duplicates+r.data.rejected+r.data.service).toBe(r.data.total);
+      expect(new Set(r.data.rows.map((row:any)=>row.line)).size).toBe(r.data.total);
+      const serviceRows=r.data.rows.filter((row:any)=>row.status==='service');
+      expect(serviceRows).toHaveLength(r.data.service);
+      for(const row of serviceRows){expect(row.reason).toBeTruthy();expect(row.text).toBeTruthy();expect(row.preview).toBe(row.text.slice(0,140));}
+      if(!dryRun){const saved=await call(env,'GET',`/api/import/batches/${r.data.batchId}`,{cookie:o});expect(saved.data.rows).toEqual(r.data.rows);}
     }
     const entries = (await call(env,'GET','/api/entries',{cookie:o})).data.items;
     const example=examples.cases.find((c:any)=>c.fixture===`${bank}/${file}.pdf`);

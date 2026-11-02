@@ -153,15 +153,15 @@ const CSV = `Дата;Сумма;Контрагент;Описание
 const MAP = { dateCol: 0, amountCol: 1, counterpartyCol: 2, noteCol: 3, hasHeader: true };
 
 describe('импорт: ни одна строка не теряется', () => {
-  it('отчёт сходится: imported + duplicates + rejected = total; одинаковые строки внутри файла сохраняются все', async () => {
+  it('отчёт сходится: imported + duplicates + rejected + service = total; одинаковые строки внутри файла сохраняются все', async () => {
     const { env, o } = await setup();
     const dry = (await call(env, 'POST', '/api/import', { cookie: o, body: { csv: CSV, mapping: MAP, dryRun: true } })).data;
-    expect(dry.total).toBe(7); expect(dry.imported).toBe(4); expect(dry.rejected).toBe(3); expect(dry.duplicates).toBe(0);
+    expect(dry.total).toBe(7); expect(dry.imported).toBe(4); expect(dry.rejected).toBe(2);expect(dry.service).toBe(1); expect(dry.duplicates).toBe(0);
     expect((await call(env, 'GET', '/api/entries', { cookie: o })).data.items.length).toBe(0);
     const r = (await call(env, 'POST', '/api/import', { cookie: o, body: { csv: CSV, mapping: MAP, filename: 'a.csv' } })).data;
-    expect(r.imported + r.duplicates + r.rejected).toBe(r.total);
+    expect(r.imported + r.duplicates + r.rejected + r.service).toBe(r.total);
     expect(r.imported).toBe(4);
-    expect(r.rows.filter((x: any) => x.status === 'rejected').map((x: any) => x.line)).toEqual([6, 7, 8]);
+    expect(r.rows.filter((x: any) => x.status === 'rejected').map((x: any) => x.line)).toEqual([6, 8]);
     const list = (await call(env, 'GET', '/api/entries', { cookie: o })).data.items;
     expect(list.length).toBe(4);
     expect(list.filter((e: any) => e.payload.counterparty === 'ИП Мирас').length).toBe(3);
@@ -170,7 +170,7 @@ describe('импорт: ни одна строка не теряется', () =>
     const { env, o } = await setup();
     await call(env, 'POST', '/api/import', { cookie: o, body: { csv: CSV, mapping: MAP } });
     const again = (await call(env, 'POST', '/api/import', { cookie: o, body: { csv: CSV, mapping: MAP } })).data;
-    expect(again.imported).toBe(0); expect(again.duplicates).toBe(4); expect(again.rejected).toBe(3);
+    expect(again.imported).toBe(0); expect(again.duplicates).toBe(4); expect(again.rejected).toBe(2);expect(again.service).toBe(1);
     expect((await call(env, 'GET', '/api/entries', { cookie: o })).data.items.length).toBe(4);
   });
   it('откат импорта убирает записи и разрешает повторный импорт', async () => {
@@ -327,5 +327,21 @@ describe('финансовая анкета',()=>{
     const p={...profile(),expenseCategoryIds:[expense],incomes:[{id:'income',name:'Тестовый доход',categoryId:income,monthlyMinor:123456,regular:false}],obligations:[{id:'debt',name:'Тестовый платёж',monthlyMinor:1000,debtMinor:30000}],accounts:[{...profile().accounts[0],openingBalanceMinor:0},{...profile().accounts[0],id:'unknown',openingBalanceMinor:null}]};
     const saved=await call(env,'PUT','/api/financial-profile',{cookie:o,body:{version:0,status:'deferred',profile:p}});expect(saved.status).toBe(200);
     expect((await call(env,'GET','/api/financial-profile',{cookie:o})).data).toMatchObject({profile:p,status:'deferred'});
+  });
+});
+
+describe('служебные строки в отчётах импорта',()=>{
+  it('сохранённый отчёт старого Worker читается с отдельными служебными строками; чужой аккаунт его не видит',async()=>{
+    const {env,store,o,x}=await setup();const account=await store.first<{id:string}>("SELECT id FROM accounts WHERE login='owner'");
+    const rows=[{line:2,status:'imported',reason:'добавлена'},{line:3,status:'rejected',reason:'служебная строка или продолжение описания',preview:'SYNTHETIC FOOTER'},{line:4,status:'rejected',reason:'операция не завершена',preview:'SYNTHETIC PENDING'},{line:5,status:'rejected',reason:'не распознана дата',preview:'SYNTHETIC INVALID DATE'}];
+    await store.run('INSERT INTO import_batches (id,account_id,source,filename,created_at,total,imported,duplicates,rejected,report_json) VALUES (?,?,?,?,?,4,1,0,3,?)','legacy-report',account!.id,'kaspi','synthetic.pdf',Date.now(),JSON.stringify(rows));
+    const detail=await call(env,'GET','/api/import/batches/legacy-report',{cookie:o});expect(detail.data).toMatchObject({total:4,imported:1,rejected:2,service:1});expect(detail.data.rows.map((r:any)=>r.line)).toEqual([2,3,4,5]);expect(detail.data.rows[1].status).toBe('service');
+    const list=(await call(env,'GET','/api/import/batches',{cookie:o})).data.batches;expect(list[0]).toMatchObject({id:'legacy-report',rejected:2,service:1});expect(list[0].rows).toBeUndefined();
+    expect((await call(env,'GET','/api/import/batches/legacy-report',{cookie:x})).status).toBe(404);expect((await call(env,'GET','/api/import/batches',{cookie:x})).data.batches).toEqual([]);
+    expect((await store.first<any>("SELECT rejected,service FROM import_batches WHERE id='legacy-report'"))).toMatchObject({rejected:3,service:0});
+  });
+  it('CSV не может спрятать плохую операцию через serviceCol или похожую причину; пустая строка учитывается отдельно',async()=>{
+    const {env,o}=await setup();const r=await call(env,'POST','/api/import',{cookie:o,body:{bank:'generic',csv:'date;amount;name;class;reason\nBAD;-1;SYNTHETIC;service;служебная строка или продолжение описания\n;;;;',mapping:{dateCol:0,amountCol:1,counterpartyCol:2,serviceCol:3,rejectionCol:4}}});
+    expect(r.data).toMatchObject({total:2,imported:0,rejected:1,service:1});expect(r.data.rows.map((r:any)=>r.status)).toEqual(['rejected','service']);
   });
 });

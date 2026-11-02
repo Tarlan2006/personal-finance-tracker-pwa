@@ -1,3 +1,4 @@
+import { ImportReportView } from './import-report';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { api, ApiError, pauseRemainingSec } from './api';
 import { getQueueStatus, subscribeQueue, listQueue, retryFailed, flush } from './queue';
@@ -202,7 +203,7 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
   const [file, setFile] = useState<{ name: string; text: string; header: string[]; delim: string; pdfBase64?: string } | null>(null);
   const [m, setM] = useState<{ date: number; amount: number; cp: number; note: number; mode: 'signed' | 'split' | 'dir'; debit: number; credit: number; dirCol: number; inV: string; outV: string }>({ date: 0, amount: 1, cp: -1, note: -1, mode: 'signed', debit: -1, credit: -1, dirCol: -1, inV: '', outV: '' });
   const [rep, setRep] = useState<any>(null); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
-  const [visibleRows,setVisibleRows]=useState(100);const readGeneration=useRef(0);
+  const [history,setHistory]=useState<any[]|null>(null);const [historyBusy,setHistoryBusy]=useState(false);const readGeneration=useRef(0);
   useEffect(()=>()=>{readGeneration.current++;},[]);
   async function pick(f: File | undefined) {
     if (!f) return; const generation=++readGeneration.current;setRep(null); setErr(''); setFile(null);
@@ -227,11 +228,11 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
   }
   const body = (dryRun: boolean) => ({ bank, pdfBase64: file!.pdfBase64, csv: file!.text, filename: file!.name, dryRun, mapping: { delimiter: file!.delim, hasHeader: true, dateCol: m.date, counterpartyCol: m.cp >= 0 ? m.cp : undefined, noteCol: m.note >= 0 ? m.note : undefined,
     ...(m.mode === 'signed' ? { amountCol: m.amount } : m.mode === 'split' ? { debitCol: m.debit >= 0 ? m.debit : undefined, creditCol: m.credit >= 0 ? m.credit : undefined } : { amountCol: m.amount, directionCol: m.dirCol, inValues: m.inV.split(',').map(s => s.trim()).filter(Boolean), outValues: m.outV.split(',').map(s => s.trim()).filter(Boolean) }) } });
-  async function run(dry: boolean) { setBusy(true); setErr(''); try { const r = await api('POST', '/api/import', body(dry)); setRep(r);setVisibleRows(100); if (!dry) { bump(); onImported?.(r.imported); } } catch (e) { setErr((e as ApiError).message); } finally { setBusy(false); } }
+  async function run(dry: boolean) { setBusy(true); setErr(''); try { const r = await api('POST', '/api/import', body(dry)); setRep(r); if (!dry) { bump(); onImported?.(r.imported); } } catch (e) { setErr((e as ApiError).message); } finally { setBusy(false); } }
   const sel = (label: string, key: 'date' | 'amount' | 'cp' | 'note' | 'debit' | 'credit' | 'dirCol', optional = false) => <Field label={label}><select aria-label={label} value={m[key]} onChange={e => setM({ ...m, [key]: Number(e.target.value) })}>{optional && <option value={-1}>— нет —</option>}{file!.header.map((h, i) => <option key={i} value={i}>{h || `Колонка ${i + 1}`}</option>)}</select></Field>;
   return <>
     <div className="screen-kicker">ИМПОРТ ОПЕРАЦИЙ</div><h1>Выписка</h1><div className="import-hero" aria-hidden="true">↥</div>
-    <p className="muted">Каждая строка файла попадёт в отчёт: добавлена, пропущена как повтор или отклонена с причиной. Halyk, Kaspi и Freedom: PDF с текстовым слоем. Для других файлов — универсальный CSV. За один раз — до 1000 строк (у Freedom многострочная операция считается одной строкой). Большую выписку разделите по датам, не разбивая операции одного дня.</p>
+    <p className="muted">Каждая строка файла попадёт в отчёт: добавлена, распознана как повтор, отклонена с причиной или учтена как служебный текст. Halyk, Kaspi и Freedom: PDF с текстовым слоем. Для других файлов — универсальный CSV. За один раз — до 1000 строк (у Freedom многострочная операция считается одной строкой). Большую выписку разделите по датам, не разбивая операции одного дня.</p>
     <fieldset className="bank-fieldset" aria-label="Банк" disabled={busy}>
       <legend>Выберите банк · PDF</legend>
       <div className="bank-cards">{['halyk','kaspi','freedom'].map(id=>{
@@ -255,11 +256,8 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
       <div style={{ display: 'flex', gap: 8 }}><button className="btn sec" disabled={busy} onClick={() => run(true)}>Проверить</button><button className="btn" disabled={busy} onClick={() => run(false)}>Импортировать</button></div>
     </>}
     {busy && <div className="parsing-state" role="status"><span className="spinner"/>Разбираем файл и проверяем операции…</div>}
-    {rep && <><h2>{rep.dryRun ? 'Проверка (ничего не записано)' : 'Готово'}</h2>
-      <div className="group" data-testid="import-report"><div className="row"><span className="grow">Всего строк</span><b>{rep.total}</b></div><div className="row"><span className="grow">{rep.dryRun ? 'Будет добавлено' : 'Добавлено'}</span><b>{rep.imported}</b></div><div className="row"><span className="grow">Уже были (повторы)</span><b>{rep.duplicates}</b></div><div className="row"><span className="grow">Отклонено</span><b>{rep.rejected}</b></div></div>
-      {rep.rows.filter((r: any) => r.status !== 'imported').slice(0, visibleRows).map((r: any) => <div className="banner" data-testid="import-row-result" key={r.line}>Строка {r.line}: {r.status === 'duplicate' ? 'повтор' : r.reason}<div className="sub ell">{r.preview}</div></div>)}
-      {rep.rows.filter((r:any)=>r.status!=='imported').length>visibleRows&&<button className="btn sec" onClick={()=>setVisibleRows(n=>n+100)}>Показать ещё строки отчёта</button>}
-      {!rep.dryRun && onViewFeed && <button className="btn sec" style={{marginBottom:16}} onClick={onViewFeed}>Посмотреть в Ленте</button>}
-      {!rep.dryRun && rep.newCounterparties.length > 0 && <div className="banner">Новых получателей без категории: {rep.newCounterparties.length}. Назначьте категории в «Отчётах».</div>}</>}
+    {rep&&<ImportReportView report={rep} onViewFeed={onViewFeed}/>}
+    <button className="btn sec" style={{margin:'20px 0'}} disabled={busy||historyBusy} onClick={async()=>{setHistoryBusy(true);setErr('');try{setHistory((await api('GET','/api/import/batches')).batches);}catch(e){setErr((e as Error).message);}finally{setHistoryBusy(false);}}}>{historyBusy?'Загружаем историю…':'История импортов'}</button>
+    {history&&<div className="group" role="group" aria-label="Сохранённые импорты">{history.map(b=><button className="row" disabled={busy||historyBusy} key={b.id} onClick={async()=>{setHistoryBusy(true);setErr('');try{const r=await api('GET','/api/import/batches/'+b.id);readGeneration.current++;setFile(null);setRep({...r,dryRun:false,saved:true,batchId:r.id,newCounterparties:[]});}catch(e){setErr((e as Error).message);}finally{setHistoryBusy(false);}}}><div className="grow"><div>{b.filename}</div><div className="sub">Добавлено {b.imported} · повторы {b.duplicates} · отклонено {b.rejected} · служебных {b.service}</div></div></button>)}{!history.length&&<div className="row muted">Сохранённых импортов нет</div>}</div>}
   </>;
 }

@@ -7,10 +7,12 @@ import { normName, parseAmountMinor, parseDateMs } from './normalize';
 import { insertStatements, normalizeTx } from './entries';
 import { loadMeta } from './meta';
 import { MAX_NOTE_LENGTH, type TxPayload } from '../../../../shared/types';
+import { LEGACY_SERVICE_REASON, presentImportReport, type RowStatus, type ImportRow } from '../../../../shared/import-report';
+export type {RowStatus} from '../../../../shared/import-report';
 
 export interface Mapping {
   bank?: string; delimiter?: string; hasHeader?: boolean;
-  dateCol: number; rejectionCol?: number; counterpartyCol?: number; noteCol?: number;
+  dateCol: number; rejectionCol?: number; counterpartyCol?: number; noteCol?: number; serviceCol?:number;
   /** Вариант 1: одна колонка суммы; минус = расход, плюс = доход */
   amountCol?: number;
   /** Вариант 2: отдельные колонки списания/зачисления */
@@ -27,20 +29,19 @@ export const BANK_PROFILES: Record<string, { title: string; ready: boolean; mapp
   freedom: { title: 'Freedom (PDF)', ready: true },
 };
 
-export type RowStatus = 'imported' | 'duplicate' | 'rejected';
 export interface ImportReport {
-  total: number; imported: number; duplicates: number; rejected: number; dryRun: boolean; batchId: string | null;
-  rows: Array<{ line: number; status: RowStatus; reason?: string; preview?: string }>;
+  total: number; imported: number; duplicates: number; rejected: number; service:number; dryRun: boolean; batchId: string | null;
+  rows: ImportRow[];
   newCounterparties: string[];
 }
 
 
 
-interface Parsed { line: number; payload?: TxPayload; occurredAt?: number; key?: string; reject?: string; preview: string }
+interface Parsed { line: number; payload?: TxPayload; occurredAt?: number; key?: string; reject?: string; service?:string;text?:string;preview: string }
 
 export function parseRows(csv: string, m: Mapping): { parsed: Parsed[]; headerLine: number | null } {
   if (!m || !Number.isInteger(m.dateCol)) throw new HttpError(400, 'bad_mapping', 'Не указана колонка даты');
-  for(const key of ['dateCol','amountCol','debitCol','creditCol','directionCol','counterpartyCol','noteCol','rejectionCol'] as const){const v=m[key];if(v!==undefined&&(!Number.isInteger(v)||v<0||v>255))throw new HttpError(400,'bad_mapping','Колонки должны быть от 0 до 255');}
+  for(const key of ['dateCol','amountCol','debitCol','creditCol','directionCol','counterpartyCol','noteCol','rejectionCol','serviceCol'] as const){const v=m[key];if(v!==undefined&&(!Number.isInteger(v)||v<0||v>255))throw new HttpError(400,'bad_mapping','Колонки должны быть от 0 до 255');}
   if(m.delimiter!==undefined&&(typeof m.delimiter!=='string'||m.delimiter.length!==1||/[\r\n"]/.test(m.delimiter)))throw new HttpError(400,'bad_mapping','Нужен один символ разделителя');
   if(m.hasHeader!==undefined&&typeof m.hasHeader!=='boolean')throw new HttpError(400,'bad_mapping','Укажите наличие заголовка');
   for(const values of [m.inValues,m.outValues])if(values!==undefined&&(!Array.isArray(values)||values.length>40||values.some(v=>typeof v!=='string'||v.length>80)))throw new HttpError(400,'bad_mapping','Некорректные значения направлений');
@@ -56,8 +57,9 @@ export function parseRows(csv: string, m: Mapping): { parsed: Parsed[]; headerLi
   for (let i = start; i < rows.length; i++) {
     const r = rows[i]; const line = lines[i];
     const cell = (c?: number) => (Number.isInteger(c) ? (r[c as number] ?? '') : '').trim();
-    const preview = r.join(' | ').slice(0, 140);
-    if (r.every(c => !c.trim())) { parsed.push({ line, reject: 'пустая строка', preview }); continue; }
+    const preview = r.filter((_,column)=>column!==m.rejectionCol&&column!==m.serviceCol).join(' | ').slice(0, 140);
+    if (r.every(c => !c.trim())) { parsed.push({ line, service: 'пустая строка', preview }); continue; }
+    if(cell(m.serviceCol)==='service'){const text=cell(m.noteCol);parsed.push({line,service:cell(m.rejectionCol)||'служебный текст выписки',preview:text.slice(0,140),text});continue;}
     if (cell(m.rejectionCol)) { parsed.push({ line, reject: cell(m.rejectionCol), preview }); continue; }
     const occurredAt = parseDateMs(cell(m.dateCol));
     if (occurredAt === null) { parsed.push({ line, reject: `не распознана дата «${cell(m.dateCol)}»`, preview }); continue; }
@@ -91,7 +93,7 @@ export function parseRows(csv: string, m: Mapping): { parsed: Parsed[]; headerLi
   return { parsed, headerLine: start ? lines[0] ?? null : null };
 }
 
-/** Инвариант: imported + duplicates + rejected === total. Ни одна строка не теряется молча. */
+/** imported + duplicates + rejected + service === total; every row is accounted for. */
 export async function runImport(store: Store, accountId: string, input: { csv?: string; pdfBase64?: string; bank?: string; filename?: string; mapping?: Mapping; dryRun?: boolean }): Promise<ImportReport> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'bad_import', 'Нужен объект параметров импорта');
   for(const key of ['csv','pdfBase64','bank','filename'] as const)if(input[key]!==undefined&&typeof input[key]!=='string')throw new HttpError(400,'bad_import','Некорректные параметры файла');
@@ -102,17 +104,17 @@ export async function runImport(store: Store, accountId: string, input: { csv?: 
   const csv = bank !== 'generic' ? await bankPdf(input.pdfBase64 ?? '', bank) : input.csv;
   if (typeof csv !== 'string' || !csv.trim()) throw new HttpError(400, 'empty_file', 'Файл пустой');
   if (new TextEncoder().encode(csv).length > 3 * 1024 * 1024) throw new HttpError(413, 'file_too_large', 'Файл слишком большой');
-  const mapping = bank === 'halyk' ? { bank, delimiter: ';', rejectionCol: 6, dateCol: 0, creditCol: 4, debitCol: 5, counterpartyCol: 2, noteCol: 3 } : bank !== 'generic' ? { bank, delimiter: ';', rejectionCol: 6, dateCol: 0, amountCol: 1, counterpartyCol: 2, noteCol: 3 } : input.mapping!;
+  const mapping = bank === 'halyk' ? { bank, delimiter: ';', rejectionCol: 6, serviceCol:7,dateCol: 0, creditCol: 4, debitCol: 5, counterpartyCol: 2, noteCol: 3 } : bank !== 'generic' ? { bank, delimiter: ';', rejectionCol: 6,serviceCol:7, dateCol: 0, amountCol: 1, counterpartyCol: 2, noteCol: 3 } : {...input.mapping,serviceCol:undefined} as Mapping;
   const { parsed } = parseRows(csv, mapping);
   // All fallible reads/preparation happen before the financial transaction.
   const meta = await loadMeta(store, accountId);
-  const report: ImportReport = { total: parsed.length, imported: 0, duplicates: 0, rejected: 0, dryRun: !!input.dryRun, batchId: null, rows: [], newCounterparties: [] };
+  const report: ImportReport = { total: parsed.length, imported: 0, duplicates: 0, rejected: 0,service:0, dryRun: !!input.dryRun, batchId: null, rows: [], newCounterparties: [] };
   const good = parsed.filter(p => p.payload);
   const keys = await Promise.all(good.map(async p => ({ p, id: uuid(), key: await sha256(`${accountId}|${p.key}`) })));
   const batchId = uuid();
   const candidates = new Map(keys.map(c => [c.p.line, c.id]));
-  const sourceRows = parsed.map(p => ({ line: p.line, status: p.reject ? 'rejected' : 'duplicate',
-    reason: p.reject ? p.reject.slice(0, MAX_IMPORT_REASON_CHARS) : 'операция уже импортирована', preview: p.preview,
+  const sourceRows = parsed.map(p => ({ line: p.line, status: p.service?'service':p.reject ? 'rejected' : 'duplicate',
+    reason: (p.service??p.reject??'операция уже импортирована').slice(0,MAX_IMPORT_REASON_CHARS), preview: p.preview,...(p.text!==undefined?{text:p.text}:{}),
     ...(p.payload ? { entryId: candidates.get(p.line) } : {}) }));
   const sourceJson = JSON.stringify(sourceRows);
   // The persisted JSON only removes entryId and shortens successful reasons.
@@ -129,12 +131,13 @@ export async function runImport(store: Store, accountId: string, input: { csv?: 
       for (const row of found) foundKeys.add(row.dedupe_key);
     }
     const keyByLine = new Map(keys.map(c => [c.p.line, c.key]));
-    report.rows = sourceRows.map(({entryId, ...r}) => r.status === 'rejected' ? { ...r, status: 'rejected' as const } :
+    report.rows = sourceRows.map(({entryId, ...r}) => r.status === 'service'?{...r,status:'service' as const}:r.status === 'rejected' ? { ...r, status: 'rejected' as const } :
       foundKeys.has(keyByLine.get(r.line)!) ? { ...r, status: 'duplicate' as const } :
       { ...r, status: 'imported' as const, reason: 'готова к импорту' });
     report.imported = report.rows.filter(r => r.status === 'imported').length;
     report.duplicates = report.rows.filter(r => r.status === 'duplicate').length;
     report.rejected = report.rows.filter(r => r.status === 'rejected').length;
+    report.service = report.rows.filter(r => r.status === 'service').length;
   } else {
     const stmts: D1PreparedStatement[] = [];
     for (const c of keys) stmts.push(...insertStatements(store, accountId, c.id, c.p.payload!, c.p.occurredAt!, 'import', { importId: batchId, dedupeKey: c.key }));
@@ -143,7 +146,7 @@ export async function runImport(store: Store, accountId: string, input: { csv?: 
     stmts.push(store.stmt(`WITH context AS (SELECT ? AS account_id, ? AS batch_id),
       evaluated AS (
         SELECT CAST(json_extract(j.value, '$.line') AS INTEGER) AS line, j.value AS row_json,
-          CASE WHEN json_extract(j.value, '$.status') = 'rejected' THEN 'rejected'
+          CASE WHEN json_extract(j.value, '$.status') IN ('rejected','service') THEN json_extract(j.value,'$.status')
             WHEN EXISTS (SELECT 1 FROM entries e WHERE e.account_id = context.account_id
               AND e.id = json_extract(j.value, '$.entryId') AND e.import_id = context.batch_id)
             THEN 'imported' ELSE 'duplicate' END AS status
@@ -154,20 +157,20 @@ export async function runImport(store: Store, accountId: string, input: { csv?: 
             THEN 'операция уже импортирована' ELSE json_extract(row_json, '$.reason') END) AS row_json
         FROM evaluated ORDER BY line
       )
-      INSERT INTO import_batches (id, account_id, source, filename, created_at, total, imported, duplicates, rejected, report_json)
+      INSERT INTO import_batches (id, account_id, source, filename, created_at, total, imported, duplicates, rejected, service, report_json)
       SELECT ?,?,?,?,?,count(*),coalesce(sum(status = 'imported'),0),coalesce(sum(status = 'duplicate'),0),
-        coalesce(sum(status = 'rejected'),0),json_group_array(json(row_json)) FROM normalized`,
+        coalesce(sum(status = 'rejected'),0),coalesce(sum(status='service'),0),json_group_array(json(row_json)) FROM normalized`,
       accountId, batchId, sourceJson, batchId, accountId, bank, String(input.filename ?? 'file').slice(0,120), now()));
-    stmts.push(store.stmt('SELECT total, imported, duplicates, rejected, report_json FROM import_batches WHERE account_id = ? AND id = ?', accountId, batchId));
+    stmts.push(store.stmt('SELECT total, imported, duplicates, rejected, service, report_json FROM import_batches WHERE account_id = ? AND id = ?', accountId, batchId));
     let results;
     try { results = await store.batch(stmts); }
     catch { throw new HttpError(503, 'import_failed', 'Не удалось подтвердить импорт. Обновите список пакетов или повторите файл: уже записанные операции будут распознаны как дубли'); }
     const saved = results[results.length - 1].results[0] as any;
     report.batchId = batchId;
-    report.total = saved.total; report.imported = saved.imported; report.duplicates = saved.duplicates; report.rejected = saved.rejected;
+    report.total = saved.total; report.imported = saved.imported; report.duplicates = saved.duplicates; report.rejected = saved.rejected;report.service=saved.service;
     report.rows = JSON.parse(saved.report_json);
   }
-  if (report.rows.length !== report.total || report.imported + report.duplicates + report.rejected !== report.total) throw new Error('import invariant violated');
+  if (report.rows.length !== report.total || report.imported + report.duplicates + report.rejected + report.service !== report.total) throw new Error('import invariant violated');
   const seenN = new Set<string>();
   for (const c of keys) {
     const p = c.p.payload!; const n = normName(p.counterparty);
@@ -178,12 +181,16 @@ export async function runImport(store: Store, accountId: string, input: { csv?: 
   return report;
 }
 
-export const listBatches = (store: Store, accountId: string) =>
-  store.all('SELECT id, source, filename, created_at, total, imported, duplicates, rejected FROM import_batches WHERE account_id = ? ORDER BY created_at DESC LIMIT 50', accountId);
+export async function listBatches(store:Store,accountId:string){
+  const batches=await store.all<any>(`SELECT id,source,filename,created_at,total,imported,duplicates,rejected,service,
+    CASE WHEN service=0 AND rejected>0 AND (instr(report_json,?)>0 OR instr(report_json,'пустая строка')>0) THEN report_json ELSE NULL END AS legacy_rows
+    FROM import_batches WHERE account_id=? ORDER BY created_at DESC LIMIT 50`,LEGACY_SERVICE_REASON,accountId);
+  return batches.map(({legacy_rows,...b})=>{if(!legacy_rows)return b;const result=presentImportReport({...b,rows:JSON.parse(legacy_rows)},b.source);const {rows,...summary}=result;return summary;});
+}
 export async function getBatch(store: Store, accountId: string, id: string) {
   const b = await store.first<any>('SELECT * FROM import_batches WHERE id = ? AND account_id = ?', id, accountId);
   if (!b) throw new HttpError(404, 'not_found', 'Импорт не найден');
-  return { ...b, report_json: undefined, rows: JSON.parse(b.report_json) };
+  return presentImportReport({ ...b, report_json: undefined, rows: JSON.parse(b.report_json) },b.source);
 }
 /** Откат импорта целиком (мягкое удаление записей пакета). */
 export async function undoBatch(store: Store, accountId: string, id: string) {

@@ -73,7 +73,7 @@ describe('атомарный импорт и ограничения D1',()=>{
     const reports=await Promise.all([runImport(store,account,{csv:csv(50),mapping}),runImport(store,account,{csv:csv(50),mapping})]);
     expect(reports.map(r=>r.imported).sort((a,b)=>a-b)).toEqual([0,50]);
     expect(reports.map(r=>r.duplicates).sort((a,b)=>a-b)).toEqual([0,50]);
-    for(const r of reports){ const saved=await getBatch(store,account,r.batchId!);expect(saved.rows).toEqual(r.rows);expect(saved.imported+saved.duplicates+saved.rejected).toBe(saved.total); }
+    for(const r of reports){ const saved=await getBatch(store,account,r.batchId!);expect(saved.rows).toEqual(r.rows);expect(saved.imported+saved.duplicates+saved.rejected+saved.service).toBe(saved.total); }
     expect(count('entries')).toBe(50);expect(count('import_batches')).toBe(2);local.raw.close();
   });
 
@@ -88,7 +88,7 @@ describe('атомарный импорт и ограничения D1',()=>{
   it('раздутый JSON из управляющих символов: 413 до записи, а не ошибка D1 после записи',async()=>{
     const {store,local,account,count}=await setup();
     const why='\u0001'.repeat(200);
-    await expect(runImport(store,account,{csv:'why;date;amount\n'+Array(500).fill(`${why};01.11.2026;-1`).join('\n'),mapping:{dateCol:1,amountCol:2,rejectionCol:0}})).rejects.toMatchObject({status:413,code:'report_too_large'});
+    await expect(runImport(store,account,{csv:'why;date;amount\n'+Array(1000).fill(`${why};01.11.2026;-1`).join('\n'),mapping:{dateCol:1,amountCol:2,rejectionCol:0}})).rejects.toMatchObject({status:413,code:'report_too_large'});
     expect([count('entries'),count('counterparties'),count('import_batches')]).toEqual([0,0,0]);local.raw.close();
   });
 
@@ -103,4 +103,12 @@ it('1000 строк: атомарная запись и ограниченный
  const {store,local,account,count}=await setup();const r=await runImport(store,account,{csv:csv(MAX_IMPORT_ROWS),mapping});
  expect(r).toMatchObject({total:1000,imported:1000,duplicates:0});expect(store.ops).toBe(2);expect(count('entries')).toBe(1000);
  store.ops=0;const dry=await runImport(store,account,{csv:csv(1000),mapping,dryRun:true});expect(dry.duplicates).toBe(1000);expect(store.ops).toBeLessThanOrEqual(13);local.raw.close();
+});
+it('1000 служебных строк: полный атомарный отчёт, повтор без операций и прежний бюджет D1',async()=>{
+ const {store,local,account,count}=await setup();
+ try{const input={csv:'date;amount\n'+Array(1000).fill(';').join('\n'),mapping:{dateCol:0,amountCol:1}};
+  store.ops=0;const r=await runImport(store,account,input);expect(r).toMatchObject({total:1000,imported:0,duplicates:0,rejected:0,service:1000});expect(r.rows).toHaveLength(1000);expect(store.ops).toBe(2);expect(count('entries')).toBe(0);
+  expect(r.rows.map(x=>x.line)).toEqual(Array.from({length:1000},(_,i)=>i+2));const saved=await getBatch(store,account,r.batchId!);expect(saved.rows).toEqual(r.rows);expect(saved.service).toBe(1000);
+  const repeated=await runImport(store,account,input);expect(repeated).toMatchObject({total:1000,imported:0,duplicates:0,rejected:0,service:1000});expect(count('entries')).toBe(0);
+ }finally{local.raw.close();}
 });

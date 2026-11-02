@@ -93,13 +93,13 @@ for (const [index, file] of files.entries()) {
     const ref = JSON.parse(child.stdout) as {bank:string;rows:Array<[string,number]>;total?:number;rejectedCounts?:Record<string,number>};
     if (!['kaspi','halyk','freedom'].includes(ref.bank)) { console.log(JSON.stringify({sample:index+1,bank:ref.bank,supported:false})); continue; }
     const csv = await bankPdf(readFileSync(path).toString('base64'),ref.bank);
-    const {parsed} = parseRows(csv,{bank:ref.bank,delimiter:';',dateCol:0,counterpartyCol:2,noteCol:3,rejectionCol:6,
+    const {parsed} = parseRows(csv,{bank:ref.bank,delimiter:';',dateCol:0,counterpartyCol:2,noteCol:3,rejectionCol:6,serviceCol:7,
       ...(ref.bank==='halyk'?{creditCol:4,debitCol:5}:{amountCol:1})});
     const actual = parsed.filter(r=>r.payload).map(r=>[new Date(r.occurredAt!+5*3600000).toISOString().slice(0,10),r.payload!.amountMinor*(r.payload!.direction==='in'?1:-1)]);
     const expectedKeys=ref.rows.map(r=>JSON.stringify(r)).sort(),actualKeys=actual.map(r=>JSON.stringify(r)).sort();
     const matches=JSON.stringify(expectedKeys)===JSON.stringify(actualKeys) && (ref.total===undefined||ref.total===parsed.length);
     if (!matches) failures++;
-    console.log(JSON.stringify({sample:index+1,bank:ref.bank,supported:true,referenceOperations:ref.rows.length,parsedOperations:actual.length,dateAmountDirectionMatch:matches,referenceTotal:ref.total,referenceRejected:ref.rejectedCounts,rejectedTextLines:parsed.filter(r=>r.reject).length}));
+    console.log(JSON.stringify({sample:index+1,bank:ref.bank,supported:true,referenceOperations:ref.rows.length,parsedOperations:actual.length,dateAmountDirectionMatch:matches,referenceTotal:ref.total,referenceRejected:ref.rejectedCounts,rejectedOperations:parsed.filter(r=>r.reject).length,serviceTextLines:parsed.filter(r=>r.service).length}));
   } catch { failures++; console.log(JSON.stringify({sample:index+1,error:'Локальная проверка не выполнена; проверьте AUDIT_PYTHON и pypdf. Содержимое не выводится.'})); }
 }
 if (!files.length) throw new Error('Нет локальных PDF-образцов');

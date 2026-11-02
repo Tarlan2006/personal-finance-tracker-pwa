@@ -23,7 +23,9 @@ try {
   const schema=readdirSync('migrations').filter(f=>f.endsWith('.sql')).sort().flatMap(f=>readFileSync('migrations/'+f,'utf8').replace(/--[^\n]*/g,'').split(';').map(s=>s.trim()).filter(Boolean));
   const examples=JSON.parse(readFileSync('worker/test/fixtures/examples.json','utf8'));
   const fixtures=examples.cases.filter(c=>c.fixture).map(c=>({bank:c.bank,expected:c.expected,pdfBase64:readFileSync('worker/test/fixtures/'+c.fixture).toString('base64')}));
-  const response=await fetch(origin,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({schema,fixtures}),signal:AbortSignal.timeout(90000)});
+  const serviceMigration=readFileSync('migrations/0004_import_service_rows.sql','utf8');
+  const serviceBackfill=serviceMigration.slice(serviceMigration.indexOf('WITH classified'));
+  const response=await fetch(origin,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({schema,fixtures,serviceBackfill}),signal:AbortSignal.timeout(90000)});
   const result=await response.json();console.log(JSON.stringify(result,null,2));
   if(!response.ok||!result.passed)process.exitCode=1;
 } catch(e) { console.error(e.message);process.exitCode=1; }
