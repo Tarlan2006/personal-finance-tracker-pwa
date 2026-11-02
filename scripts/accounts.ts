@@ -3,7 +3,7 @@
 //   npm run accounts -- add owner "Владелец" --db .wrangler/dev.sqlite
 //   npm run accounts -- set-password owner --remote --confirm-origin https://qarjy.<субдомен>.workers.dev
 // Пароль вводится скрытым вводом (или переменной QARJY_PASSWORD для автоматизации). Он нигде не печатается.
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { hashPassword, b64, randomToken, PBKDF2_ITER } from '../worker/src/util';
@@ -31,9 +31,26 @@ function exec(sql: string, wantRows = false): any[] {
       console.error(`Отказ: --confirm-origin должен точно совпадать с APP_ORIGIN из wrangler.toml (сейчас «${want}»; значение с example — это заглушка).`);
       process.exit(2);
     }
-    const r = spawnSync('npx', ['wrangler', 'd1', 'execute', 'qarjy', '--remote', '--json', '--command', sql], { encoding: 'utf8', shell: process.platform === 'win32' });
+    let r;
+    if (wantRows) {
+      // SELECT: при --file wrangler строк не возвращает, поэтому --command. На Windows (shell) оборачиваем SQL в кавычки сами.
+      const sqlArg = process.platform === 'win32' ? '"' + sql.replace(/"/g, '\\"') + '"' : sql;
+      r = spawnSync('npx', ['wrangler', 'd1', 'execute', 'qarjy', '--remote', '--yes', '--json', '--command', sqlArg], { encoding: 'utf8', shell: process.platform === 'win32' });
+    } else {
+      // Запись: SQL через файл (путь без пробелов). Файл может содержать хеш пароля — удаляем всегда.
+      mkdirSync('.wrangler', { recursive: true });
+      const tmp = '.wrangler/accounts-tmp.sql';
+      writeFileSync(tmp, sql);
+      try { r = spawnSync('npx', ['wrangler', 'd1', 'execute', 'qarjy', '--remote', '--yes', '--json', '--file', tmp], { encoding: 'utf8', shell: process.platform === 'win32' }); }
+      finally { try { unlinkSync(tmp); } catch {} }
+    }
     if (r.status !== 0) { console.error(r.stderr || r.stdout); process.exit(1); }
-    return wantRows ? JSON.parse(r.stdout)[0]?.results ?? [] : [];
+    if (!wantRows) return [];
+    // wrangler перед JSON печатает строки прогресса; ищем начало JSON-массива (строка «[» или «[{»)
+    const out: string = r.stdout ?? '';
+    const i1 = out.search(/^\[\s*$/m); const start = i1 >= 0 ? i1 : out.search(/^\[\{/m);
+    if (start < 0) { console.error('Не удалось разобрать ответ wrangler:\n' + out); process.exit(1); }
+    return JSON.parse(out.slice(start))[0]?.results ?? [];
   }
   if (!dbPath) { console.error('Укажите --db <файл sqlite> или --remote'); process.exit(2); }
   const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
@@ -61,7 +78,11 @@ async function askHidden(prompt: string): Promise<string> {
 async function askNewPassword() {
   const a = await askHidden('Новый пароль (скрыто): ');
   if (!process.env.QARJY_PASSWORD) { const b = await askHidden('Повторите пароль: '); if (a !== b) { console.error('Пароли не совпадают'); process.exit(2); } }
-  checkPasswordStrength(a); return a;
+  if (args.includes('--allow-weak')) {
+    if (a.length < 4) { console.error('Даже со --allow-weak пароль не короче 4 символов'); process.exit(2); }
+    if (a.length < 10) console.warn('ВНИМАНИЕ: слабый пароль. Допустимо для теста; перед реальными данными замените (set-password без --allow-weak).');
+  } else checkPasswordStrength(a);
+  return a;
 }
 const t = Date.now();
 async function main() {

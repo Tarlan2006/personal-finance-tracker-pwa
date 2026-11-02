@@ -11,9 +11,9 @@ run_worker_first = ["/api/*"]
 [[d1_databases]]
 binding = "DB"
 database_name = "qarjy"
-# Подставьте id после `wrangler d1 create qarjy` (см. README.md)
-database_id = "00000000-0000-0000-0000-000000000000"
+# ÃÅ¸ÃÂ¾ÃÂ´Ã‘ÂÃ‘â€šÃÂ°ÃÂ²Ã‘Å’Ã‘â€šÃÂµ id ÃÂ¿ÃÂ¾Ã‘ÂÃÂ»ÃÂµ `wrangler d1 create qarjy` (Ã‘ÂÃÂ¼. README.md)
+database_id = "3990d9e9-a8c4-4334-9726-9b2d8f182e46"
 migrations_dir = "migrations"
 
 [vars]
-APP_ORIGIN = "https://qarjy.example.workers.dev"
+APP_ORIGIN = "https://qarjy.tarlan-b06.workers.dev"
