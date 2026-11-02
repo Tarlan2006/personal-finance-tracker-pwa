@@ -1,5 +1,6 @@
 import { HttpError, type Store } from '../../env';
 import { now, sha256, uuid } from '../../util';
+import { MAX_IMPORT_ROWS, MAX_IMPORT_REPORT_BYTES, MAX_IMPORT_REASON_CHARS } from './import-limits';
 import { bankPdf } from './bank-pdf';
 import { parseCsv } from './csv';
 import { normName, parseAmountMinor, parseDateMs } from './normalize';
@@ -33,7 +34,7 @@ export interface ImportReport {
   newCounterparties: string[];
 }
 
-const MAX_ROWS = 20000;
+
 
 interface Parsed { line: number; payload?: TxPayload; occurredAt?: number; key?: string; reject?: string; preview: string }
 
@@ -42,8 +43,8 @@ export function parseRows(csv: string, m: Mapping): { parsed: Parsed[]; headerLi
   const hasAmount = Number.isInteger(m.amountCol), hasSplit = Number.isInteger(m.debitCol) || Number.isInteger(m.creditCol);
   if (!hasAmount && !hasSplit) throw new HttpError(400, 'bad_mapping', 'Не указана колонка суммы');
   const { rows, lines } = parseCsv(csv, m.delimiter);
-  if (rows.length > MAX_ROWS + 1) throw new HttpError(413, 'too_many_rows', `Не больше ${MAX_ROWS} строк за раз`);
   const start = m.hasHeader === false ? 0 : 1;
+  if (rows.length - start > MAX_IMPORT_ROWS) throw new HttpError(413, 'too_many_rows', `Не больше ${MAX_IMPORT_ROWS} строк за раз; разделите выписку на части`);
   const seen = new Map<string, number>();
   const inV = (m.inValues ?? []).map(normName), outV = (m.outValues ?? []).map(normName);
   const parsed: Parsed[] = [];
@@ -95,44 +96,70 @@ export async function runImport(store: Store, accountId: string, input: { csv?: 
   if (new TextEncoder().encode(csv).length > 3 * 1024 * 1024) throw new HttpError(413, 'file_too_large', 'Файл слишком большой');
   const mapping = bank === 'halyk' ? { bank, delimiter: ';', rejectionCol: 6, dateCol: 0, creditCol: 4, debitCol: 5, counterpartyCol: 2, noteCol: 3 } : bank === 'kaspi' ? { bank, delimiter: ';', rejectionCol: 6, dateCol: 0, amountCol: 1, counterpartyCol: 2, noteCol: 3 } : input.mapping!;
   const { parsed } = parseRows(csv, mapping);
+  // All fallible reads/preparation happen before the financial transaction.
+  const meta = await loadMeta(store, accountId);
   const report: ImportReport = { total: parsed.length, imported: 0, duplicates: 0, rejected: 0, dryRun: !!input.dryRun, batchId: null, rows: [], newCounterparties: [] };
   const good = parsed.filter(p => p.payload);
-  for (const p of parsed) if (p.reject) { report.rejected++; report.rows.push({ line: p.line, status: 'rejected', reason: p.reject, preview: p.preview }); }
-  const keys = await Promise.all(good.map(async p => ({ p, key: await sha256(`${accountId}|${p.key}`) })));
+  const keys = await Promise.all(good.map(async p => ({ p, id: uuid(), key: await sha256(`${accountId}|${p.key}`) })));
   const batchId = uuid();
-  const dupLines = new Set<number>();
+  const candidates = new Map(keys.map(c => [c.p.line, c.id]));
+  const sourceRows = parsed.map(p => ({ line: p.line, status: p.reject ? 'rejected' : 'duplicate',
+    reason: p.reject ? p.reject.slice(0, MAX_IMPORT_REASON_CHARS) : 'операция уже импортирована', preview: p.preview,
+    ...(p.payload ? { entryId: candidates.get(p.line) } : {}) }));
+  const sourceJson = JSON.stringify(sourceRows);
+  // The persisted JSON only removes entryId and shortens successful reasons.
+  // Reserve headroom for other columns in D1's 2 MB row limit.
+  if (new TextEncoder().encode(sourceJson).length > MAX_IMPORT_REPORT_BYTES - 1024)
+    throw new HttpError(413, 'report_too_large', 'Отчёт слишком большой; разделите выписку на части');
 
   if (input.dryRun) {
+    const foundKeys = new Set<string>();
     for (let i = 0; i < keys.length; i += 90) {
       const chunk = keys.slice(i, i + 90);
       const found = await store.all<{ dedupe_key: string }>(
         `SELECT dedupe_key FROM entries WHERE account_id = ? AND dedupe_key IN (${chunk.map(() => '?').join(',')})`, accountId, ...chunk.map(c => c.key));
-      const set = new Set(found.map(f => f.dedupe_key));
-      for (const c of chunk) if (set.has(c.key)) dupLines.add(c.p.line);
+      for (const row of found) foundKeys.add(row.dedupe_key);
     }
+    const keyByLine = new Map(keys.map(c => [c.p.line, c.key]));
+    report.rows = sourceRows.map(({entryId, ...r}) => r.status === 'rejected' ? { ...r, status: 'rejected' as const } :
+      foundKeys.has(keyByLine.get(r.line)!) ? { ...r, status: 'duplicate' as const } :
+      { ...r, status: 'imported' as const, reason: 'готова к импорту' });
+    report.imported = report.rows.filter(r => r.status === 'imported').length;
+    report.duplicates = report.rows.filter(r => r.status === 'duplicate').length;
+    report.rejected = report.rows.filter(r => r.status === 'rejected').length;
   } else {
-    for (let i = 0; i < keys.length; i += 40) {
-      const chunk = keys.slice(i, i + 40); const stmts: D1PreparedStatement[] = []; const spans: number[] = [];
-      for (const c of chunk) {
-        spans.push(stmts.length);
-        stmts.push(...insertStatements(store, accountId, uuid(), c.p.payload!, c.p.occurredAt!, 'import', { importId: batchId, dedupeKey: c.key }));
-      }
-      const res = await store.batch(stmts);
-      chunk.forEach((c, j) => { if (!res[spans[j]].meta?.changes) dupLines.add(c.p.line); });
-    }
-  }
-  for (const c of keys) {
-    if (dupLines.has(c.p.line)) { report.duplicates++; report.rows.push({ line: c.p.line, status: 'duplicate', reason: 'операция уже импортирована', preview: c.p.preview }); }
-    else { report.imported++; report.rows.push({ line: c.p.line, status: 'imported', reason: input.dryRun ? 'готова к импорту' : 'добавлена', preview: c.p.preview }); }
-  }
-  report.rows.sort((a, b) => a.line - b.line);
-  if (report.imported + report.duplicates + report.rejected !== report.total) throw new Error('import invariant violated');
-  if (!input.dryRun) {
+    const stmts: D1PreparedStatement[] = [];
+    for (const c of keys) stmts.push(...insertStatements(store, accountId, c.id, c.p.payload!, c.p.occurredAt!, 'import', { importId: batchId, dedupeKey: c.key }));
+    // Evaluate duplicates after the inserts, inside the SAME transaction. A competing
+    // import may win the unique key; a preflight SELECT cannot decide this safely.
+    stmts.push(store.stmt(`WITH context AS (SELECT ? AS account_id, ? AS batch_id),
+      evaluated AS (
+        SELECT CAST(json_extract(j.value, '$.line') AS INTEGER) AS line, j.value AS row_json,
+          CASE WHEN json_extract(j.value, '$.status') = 'rejected' THEN 'rejected'
+            WHEN EXISTS (SELECT 1 FROM entries e WHERE e.account_id = context.account_id
+              AND e.id = json_extract(j.value, '$.entryId') AND e.import_id = context.batch_id)
+            THEN 'imported' ELSE 'duplicate' END AS status
+        FROM json_each(?) j CROSS JOIN context
+      ), normalized AS (
+        SELECT line, status, json_set(json_remove(row_json, '$.entryId'), '$.status', status,
+          '$.reason', CASE WHEN status = 'imported' THEN 'добавлена' WHEN status = 'duplicate'
+            THEN 'операция уже импортирована' ELSE json_extract(row_json, '$.reason') END) AS row_json
+        FROM evaluated ORDER BY line
+      )
+      INSERT INTO import_batches (id, account_id, source, filename, created_at, total, imported, duplicates, rejected, report_json)
+      SELECT ?,?,?,?,?,count(*),coalesce(sum(status = 'imported'),0),coalesce(sum(status = 'duplicate'),0),
+        coalesce(sum(status = 'rejected'),0),json_group_array(json(row_json)) FROM normalized`,
+      accountId, batchId, sourceJson, batchId, accountId, bank, String(input.filename ?? 'file').slice(0,120), now()));
+    stmts.push(store.stmt('SELECT total, imported, duplicates, rejected, report_json FROM import_batches WHERE account_id = ? AND id = ?', accountId, batchId));
+    let results;
+    try { results = await store.batch(stmts); }
+    catch { throw new HttpError(503, 'import_failed', 'Не удалось подтвердить импорт. Обновите список пакетов или повторите файл: уже записанные операции будут распознаны как дубли'); }
+    const saved = results[results.length - 1].results[0] as any;
     report.batchId = batchId;
-    await store.run('INSERT INTO import_batches (id, account_id, source, filename, created_at, total, imported, duplicates, rejected, report_json) VALUES (?,?,?,?,?,?,?,?,?,?)',
-      batchId, accountId, bank, String(input.filename ?? 'file.csv').slice(0, 120), now(), report.total, report.imported, report.duplicates, report.rejected, JSON.stringify(report.rows));
+    report.total = saved.total; report.imported = saved.imported; report.duplicates = saved.duplicates; report.rejected = saved.rejected;
+    report.rows = JSON.parse(saved.report_json);
   }
-  const meta = await loadMeta(store, accountId);
+  if (report.rows.length !== report.total || report.imported + report.duplicates + report.rejected !== report.total) throw new Error('import invariant violated');
   const seenN = new Set<string>();
   for (const c of keys) {
     const p = c.p.payload!; const n = normName(p.counterparty);

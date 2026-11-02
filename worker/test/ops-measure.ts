@@ -17,6 +17,7 @@ export async function measureSession() {
   const csv = 'Дата;Сумма;Контрагент\n' + Array.from({ length: 200 }, (_, i) => `${String(1 + (i % 28)).padStart(2, '0')}.10.2026;-${100 + i};Контрагент ${i % 20}`).join('\n');
   await rec('POST /api/import (200 строк)', call(env, 'POST', '/api/import', { cookie, body: { csv, mapping: { dateCol: 0, amountCol: 1, counterpartyCol: 2, hasHeader: true } } }));
   await rec('POST /api/import (500 строк)', call(env, 'POST', '/api/import', { cookie, body: { csv: 'Дата;Сумма;Контрагент\n' + Array.from({length:500}, (_,i) => `01.11.2026;-${i+1};SYNTHETIC ${i}`).join('\n'), mapping: {dateCol:0,amountCol:1,counterpartyCol:2} } }));
+  await rec('POST /api/import (500 строк, dryRun)', call(env, 'POST', '/api/import', { cookie, body: { csv: 'date;amount;name\n' + Array.from({length:500}, (_,i) => `01.11.2026;-${i+1};SYNTHETIC ${i}`).join('\n'), mapping: {dateCol:0,amountCol:1,counterpartyCol:2}, dryRun:true } }));
   const key = (await rec('POST /api/keys', call(env, 'POST', '/api/keys', { cookie, body: { label: 'W', scope: 'write' } }))).data;
   await rec('POST /api/shortcuts/add', call(env, 'POST', '/api/shortcuts/add', { raw: 'amount=500&counterparty=Кофе', headers: { authorization: 'Bearer ' + key.key, 'content-type': 'application/x-www-form-urlencoded' } }));
   return rows;

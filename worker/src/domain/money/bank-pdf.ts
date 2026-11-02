@@ -1,3 +1,4 @@
+import { MAX_IMPORT_ROWS } from './import-limits';
 import { getDocumentProxy } from 'unpdf';
 import { HttpError } from '../../env';
 
@@ -17,6 +18,7 @@ export async function bankPdf(base64: string, bank: string): Promise<string> {
       const page = await pdf.getPage(p); const content = await page.getTextContent();
       const items = content.items.filter((t): t is typeof t & {str: string; transform: number[]} => 'str' in t);
       if (items.some(t => (bank === 'halyk' ? /halyk|халық|халык/i : /kaspi/i).test(t.str))) signature = true;
+      if (items.length > 20000) throw new HttpError(413, 'pdf_too_complex', 'Слишком сложная страница PDF');
       const header = items.find(t => t.str.trim() === (bank === 'halyk' ? 'Transaction description' : 'Операция'));
       if (!header) { if (p > 1 && items.some(t => /^\d{2}\.\d{2}\.(?:\d{2}|\d{4})$/.test(t.str.trim()))) throw new HttpError(400, 'unknown_layout', 'Страница с операциями без известной шапки'); continue; }
       const deposit = items.some(t => t.str.trim() === 'Толық ақпарат');
@@ -34,6 +36,7 @@ export async function bankPdf(base64: string, bank: string): Promise<string> {
         g.cells[col < 0 ? 8 : col].push(t.str);
       }
       for (const g of groups) {
+        if (rows.length >= MAX_IMPORT_ROWS) throw new HttpError(413, 'too_many_rows', `Не больше ${MAX_IMPORT_ROWS} текстовых строк; разделите выписку на части`);
         const c = g.cells.map(a => a.join(' ').trim());
         // Every extracted text line remains visible in the report. Continuations are
         // conservatively rejected rather than guessed into another transaction.

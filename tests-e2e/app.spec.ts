@@ -111,6 +111,18 @@ test('PDF Kaspi: загрузка фикстуры → отчёт → получ
   await expect(page.getByTestId('cp-row').filter({hasText:'TEST SHOP'})).toBeVisible();
 });
 
+test('слишком большая выписка: понятная ошибка без частичного импорта', async ({page}) => {
+  await loggedIn(page);
+  await tab(page,'Ещё').click(); await page.getByRole('button',{name:/Загрузить выписку/}).click();
+  const csv='date;amount;counterparty\n'+Array.from({length:501},(_,i)=>`01.11.2026;-${i+1};LIMIT-TEST-501`).join('\n');
+  await page.getByLabel('Файл выписки').setInputFiles({name:'oversized.csv',mimeType:'text/csv',buffer:Buffer.from(csv,'utf8')});
+  await page.getByRole('button',{name:'Импортировать',exact:true}).click();
+  await expect(page.getByRole('alert')).toContainText('Не больше 500 строк');
+  await expect(page.getByTestId('import-report')).toHaveCount(0);
+  const count=await page.evaluate(async()=>{const r=await fetch('/api/entries?q=LIMIT-TEST-501');return (await r.json()).items.length;});
+  expect(count).toBe(0);
+});
+
 test('категории: создать, переименовать, удалить', async ({ page }) => {
   await loggedIn(page);
   await tab(page, 'Ещё').click(); await page.getByRole('button', { name: /Категории и правила/ }).click();

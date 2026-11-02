@@ -223,7 +223,7 @@ function Import() {
   const sel = (label: string, key: 'date' | 'amount' | 'cp' | 'note' | 'debit' | 'credit' | 'dirCol', optional = false) => <Field label={label}><select aria-label={label} value={m[key]} onChange={e => setM({ ...m, [key]: Number(e.target.value) })}>{optional && <option value={-1}>— нет —</option>}{file!.header.map((h, i) => <option key={i} value={i}>{h || `Колонка ${i + 1}`}</option>)}</select></Field>;
   return <>
     <h1>Выписка</h1>
-    <p className="muted">Каждая строка файла попадёт в отчёт: добавлена, пропущена как повтор или отклонена с причиной. Kaspi и Halyk: PDF с текстовым слоем. Freedom PDF пока не поддержан. Для других файлов — универсальный CSV.</p>
+    <p className="muted">Каждая строка файла попадёт в отчёт: добавлена, пропущена как повтор или отклонена с причиной. Kaspi и Halyk: PDF с текстовым слоем. Freedom PDF пока не поддержан. Для других файлов — универсальный CSV. За один раз — до 500 строк (в PDF считаются также продолжения и служебные строки). Большую выписку разделите по датам, не разбивая операции одного дня.</p>
     <Field label="Банк"><select aria-label="Банк" value={bank} onChange={e => { setBank(e.target.value); setFile(null); setRep(null); setErr(''); }}>{profiles.filter(p => p.ready).map(p => <option key={p.id} value={p.id}>{p.title}</option>)}</select></Field>
     <input key={bank} aria-label="Файл выписки" type="file" accept={bank === 'generic' ? ' .csv,.txt,text/csv'.trim() : '.pdf,application/pdf'} onChange={e => pick(e.target.files?.[0])} />
     {file && <>

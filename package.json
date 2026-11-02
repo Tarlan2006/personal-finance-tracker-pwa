@@ -14,7 +14,8 @@
     "accounts": "tsx scripts/accounts.ts",
     "scan-secrets": "node scripts/scan-secrets.mjs",
     "verify-deployment": "node scripts/verify-deployment.mjs",
-    "ops-report": "tsx scripts/ops-report.ts"
+    "ops-report": "tsx scripts/ops-report.ts",
+    "test:import-runtime": "node scripts/check-import-runtime.mjs"
   },
   "dependencies": {
     "react": "18.3.1",
