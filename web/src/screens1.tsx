@@ -30,8 +30,9 @@ export function Login() {
 const deviceLabel = () => /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android' : 'Браузер';
 export async function afterLogin() {
   const me = await api('GET', '/api/me');
-  setState({ login: me.login, name: me.name, queueKey: me.queueKey, ready: true });
-  await loadCats(); startQueue(me.login);
+  const [financialProfile,categories]=await Promise.all([api('GET','/api/financial-profile'),api('GET','/api/categories')]);
+  setState({ login: me.login, name: me.name, queueKey: me.queueKey, financialProfile, cats:categories.categories, onboardingRequired:['new','draft'].includes(financialProfile.status), ready: true });
+  startQueue(me.login);
 }
 /** Выход возможен только онлайн: cookie HttpOnly, очистить её может лишь сервер. Иначе сессия осталась бы жива. */
 export async function doLogout(): Promise<string | null> {
@@ -40,7 +41,7 @@ export async function doLogout(): Promise<string | null> {
     if ((e as ApiError).status === 0) return 'Нет связи: выйти можно только при подключении к сети';
   }
   if (login) { try { await sealQueue(login, queueKey); } catch {} }
-  setState({ login: null, name: '', queueKey: '', cats: [] });
+  setState({ login: null, name: '', queueKey: '', cats: [], financialProfile:null, onboardingRequired:false });
   return null;
 }
 
@@ -131,7 +132,7 @@ function EditSheet({ e, cats, onClose }: { e: Entry; cats: Cat[]; onClose: () =>
 
 // ---------- Добавить ----------
 export function Add({ onDone }: { onDone: () => void }) {
-  const {cats,login}=useAppState();
+  const {cats,login,financialProfile}=useAppState();
   const [dir,setDir]=useState<'out'|'in'>('out'), [amount,setAmount]=useState(''), [cp,setCp]=useState(''),[cat,setCat]=useState('');
   const [note,setNote]=useState(''),[date,setDate]=useState(todayStr()),[err,setErr]=useState(''),[busy,setBusy]=useState(false);
   const [counterparties,setCounterparties]=useState<Array<{display:string;name_norm:string;category_out_id:string|null;category_in_id:string|null}>>([]);
@@ -140,7 +141,8 @@ export function Add({ onDone }: { onDone: () => void }) {
     api('GET','/api/counterparties').then(r=>{if(active)setCounterparties(r.counterparties);}),
     api('GET','/api/rules').then(r=>{if(active)setRules(r.rules);})
   ]);return ()=>{active=false;};},[]);
-  const opts=cats.filter(c=>c.type===(dir==='in'?'income':'expense'));
+  const preferred=new Set(dir==='in'?financialProfile?.profile?.incomes.map(i=>i.categoryId):financialProfile?.profile?.expenseCategoryIds);
+  const opts=cats.filter(c=>c.type===(dir==='in'?'income':'expense')).sort((a,b)=>Number(preferred.has(b.id))-Number(preferred.has(a.id)));
   const cpRow=counterparties.find(c=>c.name_norm===normName(cp));
   const bound=opts.find(c=>c.id===(dir==='in'?cpRow?.category_in_id:cpRow?.category_out_id));
   const hay=normName(`${cp} ${note}`);

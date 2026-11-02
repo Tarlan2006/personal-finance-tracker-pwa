@@ -5,20 +5,22 @@ import { api, setUnauthorizedHandler } from './api';
 import { Icons, applyTheme, savedTheme, setState, useAppState, Sheet } from './ui';
 import { Add, Feed, Login, afterLogin } from './screens1';
 import { Import, More, Reports } from './screens2';
+import { FinancialQuestionnaire } from './onboarding';
 
 applyTheme(savedTheme());
-setUnauthorizedHandler(() => setState({ login: null, ready: true }));
+setUnauthorizedHandler(() => setState({ login: null, ready: true, financialProfile:null }));
 
 const TABS = [['feed', 'Лента', Icons.feed], ['reports', 'Отчёты', Icons.chart], ['import', 'Выписка', Icons.upload], ['more', 'Ещё', Icons.more]] as const;
 
 function App() {
-  const { login, ready } = useAppState(); const [tab, setTab] = useState<(typeof TABS)[number][0]>('feed');
+  const { login, ready, financialProfile, onboardingRequired } = useAppState(); const [tab, setTab] = useState<(typeof TABS)[number][0]>('feed');
   const [adding,setAdding] = useState(false); const [toast,setToast] = useState('');
   useEffect(() => { api('GET', '/api/me').then(() => afterLogin()).catch(() => setState({ ready: true })); }, []);
   useEffect(() => { if(!toast)return; const timer=setTimeout(()=>setToast(''),3200); return ()=>clearTimeout(timer); },[toast]);
   useEffect(() => { if(!login){setAdding(false);setTab('feed');setToast('');} },[login]);
   if (!ready) return null;
   if (!login) return <Login />;
+  if(financialProfile&&onboardingRequired)return <main className="app onboarding-app"><FinancialQuestionnaire key={login} record={financialProfile} onDone={()=>setTab('feed')}/></main>;
   const viewFeed=()=>setTab('feed');
   const imported=(count:number)=>setToast(count ? `Добавлено операций: ${count}` : 'Новых операций нет — отчёт готов');
   return <>

@@ -6,6 +6,7 @@ import * as cats from './domain/money/categories';
 import * as ent from './domain/money/entries';
 import * as imp from './domain/money/import';
 import * as cps from './domain/money/counterparties';
+import { readProfile, saveProfile } from './domain/money/financial-profile';
 import { monthlySummary, unmappedCounterparties } from './domain/money/reports';
 import { shortcutAdd, shortcutSummary } from './domain/money/shortcuts';
 import { currentMonth } from './domain/money/normalize';
@@ -52,6 +53,9 @@ route('POST', '/api/keys', 'session', async c => {
 route('DELETE', '/api/keys/:id', 'session', async c => { await auth.revokeKey(c.store, acc(c), c.params[0]); return json({ ok: true }); });
 
 // ---------- Записи ----------
+route('GET', '/api/financial-profile', 'session', async c => json(await readProfile(c.store, acc(c))));
+route('PUT', '/api/financial-profile', 'session', async c => json(await saveProfile(c.store, acc(c), await readJson(c.req, 32 * 1024))));
+
 route('GET', '/api/entries', 'session', async c => json(await ent.listTx(c.store, acc(c), c.url.searchParams)));
 route('POST', '/api/entries', 'session', async c => {
   const b = await readJson(c.req);

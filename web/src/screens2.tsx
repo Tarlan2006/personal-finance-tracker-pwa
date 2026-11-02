@@ -3,6 +3,7 @@ import { api, ApiError, pauseRemainingSec } from './api';
 import { getQueueStatus, subscribeQueue, listQueue, retryFailed, flush } from './queue';
 import { applyTheme, bump, Field, fmt, getState, loadCats, monthLabel, savedTheme, shiftMonth, Sheet, thisMonth, useAppState, type Cat } from './ui';
 import { doLogout } from './screens1';
+import { FinancialProfileScreen } from './onboarding';
 
 // ---------- Отчёты ----------
 interface Summary { month: string; totals: { in: number; out: number; net: number; count: number }; byCategory: Record<'in' | 'out', Array<{ id: string | null; name: string; color: string; sum: number; count: number }>>; byCounterparty: Record<'in' | 'out', Array<{ name: string; display: string; sum: number; count: number; categoryId: string | null }>>; uncategorized: { count: number; sum: number } }
@@ -74,14 +75,15 @@ function PickCategory({ cp, dir, cats, onClose }: { cp: { name: string; display:
 }
 
 // ---------- Ещё ----------
-type Sub = null | 'cats' | 'keys' | 'devices' | 'import' | 'sync' | 'password' | 'theme';
+type Sub = null | 'cats' | 'keys' | 'devices' | 'import' | 'sync' | 'password' | 'theme' | 'profile';
 export function More({ onImported, onViewFeed }: { onImported?: (n:number)=>void; onViewFeed?:()=>void } = {}) {
   const { name, login } = useAppState(); const [sub, setSub] = useState<Sub>(null); const [lerr, setLerr] = useState('');
-  if (sub) return <><button className="back" onClick={() => setSub(null)}>‹ Ещё</button>{{ cats: <Categories />, keys: <Keys />, devices: <Devices />, import: <Import onImported={onImported} onViewFeed={onViewFeed} />, sync: <Sync />, password: <Password />, theme: <Theme /> }[sub]}</>;
+  if (sub) return <><button className="back" onClick={() => setSub(null)}>‹ Ещё</button>{{ profile:<FinancialProfileScreen/>, cats: <Categories />, keys: <Keys />, devices: <Devices />, import: <Import onImported={onImported} onViewFeed={onViewFeed} />, sync: <Sync />, password: <Password />, theme: <Theme /> }[sub]}</>;
   const item = (s: Sub, label: string, hint?: string) => <button className="row" onClick={() => setSub(s)}><span className="grow">{label}</span><span className="sub">{hint}</span><span className="sub">›</span></button>;
   return <>
     <h1>Ещё</h1>
     <div className="group"><div className="row"><div className="grow"><div>{name}</div><div className="sub">{login}</div></div></div></div>
+    <h2>Мои финансы</h2><div className="group">{item('profile','Финансовый профиль','Счета, доходы, цели')}</div>
     <h2>Данные</h2>
     <div className="group">{item('import', 'Загрузить выписку')}{item('cats', 'Категории и правила')}<a className="row" href="/api/export.csv" download style={{ textDecoration: 'none' }}><span className="grow">Экспорт CSV</span><span className="sub">›</span></a></div>
     <h2>Интеграции</h2><div className="group">{item('keys', 'Быстрые команды (ключи)')}</div>
@@ -193,8 +195,9 @@ function Sync() {
 // ---------- Импорт CSV ----------
 const GUESS: Record<string, RegExp> = { date: /дата|date/i, amount: /сумма|amount|итого/i, cp: /получател|отправител|контрагент|merchant|название|наименование|recipient|counterparty/i, note: /назначен|описан|детал|комментар|details|description|операц/i };
 export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>void; onViewFeed?:()=>void } = {}) {
+  const {financialProfile}=useAppState();
   const [profiles, setProfiles] = useState<Array<{id: string; title: string; ready: boolean}>>([]);
-  const [bank, setBank] = useState('kaspi');
+  const [bank, setBank] = useState(()=>financialProfile?.profile?.accounts.map(a=>a.bank.toLowerCase()).find(b=>['kaspi','halyk','freedom'].includes(b))??'kaspi');
   useEffect(() => { api('GET', '/api/import/profiles').then(r => setProfiles(r.profiles)).catch(e => setErr(e.message)); }, []);
   const [file, setFile] = useState<{ name: string; text: string; header: string[]; delim: string; pdfBase64?: string } | null>(null);
   const [m, setM] = useState<{ date: number; amount: number; cp: number; note: number; mode: 'signed' | 'split' | 'dir'; debit: number; credit: number; dirCol: number; inV: string; outV: string }>({ date: 0, amount: 1, cp: -1, note: -1, mode: 'signed', debit: -1, credit: -1, dirCol: -1, inV: '', outV: '' });

@@ -294,3 +294,38 @@ it('аудит: null и массив вместо параметров импо�
   const {env,o} = await setup();
   for (const body of [null, []]) expect((await call(env,'POST','/api/import',{cookie:o,body})).status).toBe(400);
 });
+
+describe('финансовая анкета',()=>{
+  const profile=()=>({balanceDate:'2026-11-01',accounts:[{id:'synthetic-card',bank:'Kaspi',name:'Тестовая карта',kind:'card',openingBalanceMinor:123456}],expenseCategoryIds:[],monthlyBudgetMinor:null,incomes:[],obligations:[],householdSize:1,goal:'Тестовая подушка',goalTargetMinor:500000,monthlySavingMinor:10000});
+  it('GET/PUT: авторизация, изоляция, повторное открытие, план не создаёт операций',async()=>{
+    const {env,o,x}=await setup();
+    for(const method of ['GET','PUT'])expect((await call(env,method,'/api/financial-profile',{body:method==='PUT'?{}:undefined})).status).toBe(401);
+    expect((await call(env,'GET','/api/financial-profile',{cookie:o})).data).toMatchObject({status:'new',version:0,profile:null});
+    const body={version:0,status:'complete',profile:profile()};
+    const saved=await call(env,'PUT','/api/financial-profile',{cookie:o,body});expect(saved.status).toBe(200);expect(saved.data).toMatchObject({version:1,status:'complete',profile:profile()});
+    expect((await call(env,'GET','/api/financial-profile',{cookie:x})).data.profile).toBeNull();
+    await call(env,'PUT','/api/financial-profile',{cookie:x,body:{...body,profile:{...profile(),goal:'Чужая тестовая цель'}}});
+    expect((await call(env,'GET','/api/financial-profile',{cookie:o})).data.profile.goal).toBe('Тестовая подушка');
+    expect((await call(env,'PUT','/api/financial-profile',{cookie:o,body})).status).toBe(409);
+    expect((await call(env,'PUT','/api/financial-profile',{cookie:o,body:{...body,version:1,status:'draft'}})).data.version).toBe(2);
+    expect((await call(env,'GET','/api/entries',{cookie:o})).data.items).toEqual([]);
+    expect((await call(env,'GET','/api/reports/summary?month=2026-11',{cookie:o})).data.totals).toMatchObject({in:0,out:0});
+  });
+  it('проверяет категории владельца, денежные суммы, дату, размер и уникальность',async()=>{
+    const {env,o,x}=await setup();const foreign=await catId(env,x,'Магазины');
+    const invalid=[{expenseCategoryIds:[foreign]},{expenseCategoryIds:['missing']},{balanceDate:'2026-02-31'},{householdSize:0},
+      {accounts:[{...profile().accounts[0],openingBalanceMinor:1.5}]},{accounts:[{...profile().accounts[0],kind:'deposit',openingBalanceMinor:-1}]},
+      {accounts:[profile().accounts[0],profile().accounts[0]]},{monthlyBudgetMinor:1e16},{goal:'x'.repeat(201)},
+      {incomes:[{id:'x',name:'Test',categoryId:foreign,monthlyMinor:100,regular:true}]},
+      {obligations:[{id:'x',name:'Test',monthlyMinor:-1,debtMinor:null}]}];
+    for(const patch of invalid)expect((await call(env,'PUT','/api/financial-profile',{cookie:o,body:{version:0,status:'complete',profile:{...profile(),...patch}}})).status).toBe(400);
+    expect((await call(env,'PUT','/api/financial-profile',{cookie:o,raw:JSON.stringify({filler:'x'.repeat(33000)}),headers:{'content-type':'application/json'}})).status).toBe(413);
+    expect((await call(env,'GET','/api/financial-profile',{cookie:o})).data.version).toBe(0);
+  });
+  it('сохраняет выбранные категории, доходы, обязательства, ноль и неизвестный остаток',async()=>{
+    const {env,o}=await setup();const income=await catId(env,o,'Зарплата'),expense=await catId(env,o,'Транспорт');
+    const p={...profile(),expenseCategoryIds:[expense],incomes:[{id:'income',name:'Тестовый доход',categoryId:income,monthlyMinor:123456,regular:false}],obligations:[{id:'debt',name:'Тестовый платёж',monthlyMinor:1000,debtMinor:30000}],accounts:[{...profile().accounts[0],openingBalanceMinor:0},{...profile().accounts[0],id:'unknown',openingBalanceMinor:null}]};
+    const saved=await call(env,'PUT','/api/financial-profile',{cookie:o,body:{version:0,status:'deferred',profile:p}});expect(saved.status).toBe(200);
+    expect((await call(env,'GET','/api/financial-profile',{cookie:o})).data).toMatchObject({profile:p,status:'deferred'});
+  });
+});

@@ -36,9 +36,22 @@ export interface LocalD1 { db: D1Database; raw: DatabaseSync; stmtCount: () => n
 export function createLocalD1(path = ':memory:', migrationsDir?: string): LocalD1 {
   const raw = new DatabaseSync(path);
   raw.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
-  const has = migrationsDir && raw.prepare("SELECT 1 FROM sqlite_master WHERE name='accounts'").get();
-  if (migrationsDir && !has) {
-    for (const f of readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort()) raw.exec(readFileSync(join(migrationsDir, f), 'utf8'));
+  if (migrationsDir) {
+    const tracked=raw.prepare("SELECT 1 FROM sqlite_master WHERE name='local_schema_migrations'").get();
+    raw.exec('BEGIN');
+    try {
+      raw.exec('CREATE TABLE IF NOT EXISTS local_schema_migrations (name TEXT PRIMARY KEY)');
+      // Databases made by the original adapter already contain these two migrations.
+      if(!tracked)for(const [name,table] of [['0001_core.sql','accounts'],['0002_money.sql','categories']]){
+        if(raw.prepare('SELECT 1 FROM sqlite_master WHERE name=?').get(table))raw.prepare('INSERT INTO local_schema_migrations (name) VALUES (?)').run(name);
+      }
+      for(const f of readdirSync(migrationsDir).filter(f=>f.endsWith('.sql')).sort()){
+        if(raw.prepare('SELECT 1 FROM local_schema_migrations WHERE name=?').get(f))continue;
+        raw.exec(readFileSync(join(migrationsDir,f),'utf8'));
+        raw.prepare('INSERT INTO local_schema_migrations (name) VALUES (?)').run(f);
+      }
+      raw.exec('COMMIT');
+    }catch(e){raw.exec('ROLLBACK');raw.close();throw e;}
   }
   const counter = { n: 0 };
   const db = {

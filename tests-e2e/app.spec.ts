@@ -5,6 +5,11 @@ async function login(page: Page, pw = PW) {
   await page.goto('/');
   await page.getByLabel('Пароль').fill(pw);
   await page.getByRole('button', { name: 'Войти' }).click();
+  if(pw===PW){
+    await expect(page.getByRole('heading',{name:/^(Лента|Где ваши деньги\?)$/}).or(page.getByRole('alert'))).toBeVisible();
+    const later=page.getByRole('button',{name:'Сохранить и заполнить позже',exact:true});
+    if(await later.isVisible())await later.click();
+  }
 }
 async function loggedIn(page: Page) { await login(page); await expect(page.getByRole('heading', { name: 'Лента' })).toBeVisible(); }
 const tab = (page: Page, name: string) => page.getByRole('navigation').getByRole('button', { name });
@@ -20,6 +25,59 @@ async function add(page: Page, amount: string, cp: string, dir: 'Расход' |
 }
 
 test.describe.configure({ mode: 'serial' });
+
+test('стартовая анкета: счета, категории, доходы, цели, повторное открытие',async({page})=>{
+  await page.goto('/');await page.getByLabel('Пароль').fill(PW);await page.getByRole('button',{name:'Войти',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Где ваши деньги?'})).toBeVisible();
+  await page.getByLabel('Дата начальных остатков').fill('2026-11-01');
+  await page.getByRole('button',{name:'+ Halyk',exact:true}).click();
+  await page.getByLabel('Название счёта 1',{exact:true}).fill('SYNTHETIC CARD');
+  await page.getByLabel('Начальный остаток счёта 1',{exact:true}).fill('1234,56');
+  await page.getByRole('button',{name:'+ Halyk',exact:true}).click();
+  await page.getByLabel('Название счёта 2',{exact:true}).fill('SYNTHETIC DEPOSIT');
+  await page.getByLabel('Вид счёта 2',{exact:true}).selectOption('deposit');
+  await page.getByLabel('Начальный остаток счёта 2',{exact:true}).fill('5000');
+  await page.route('**/api/financial-profile',route=>route.request().method()==='PUT'?route.abort():route.continue());
+  await page.getByRole('button',{name:'Сохранить и продолжить',exact:true}).click();
+  await expect(page.getByRole('alert')).toContainText('Нет связи');
+  await expect(page.getByLabel('Начальный остаток счёта 1',{exact:true})).toHaveValue('1234,56');
+  await page.unroute('**/api/financial-profile');
+  await page.getByRole('button',{name:'Сохранить и продолжить',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Что будем учитывать?'})).toBeVisible();
+  await page.reload();await expect(page.getByLabel('Название счёта 1',{exact:true})).toHaveValue('SYNTHETIC CARD');
+  await page.getByRole('button',{name:'Сохранить и продолжить',exact:true}).click();
+  await page.getByRole('checkbox',{name:'Транспорт',exact:true}).check();
+  await page.getByLabel('План расходов в месяц',{exact:true}).fill('1500');
+  await page.getByRole('button',{name:'Сохранить и продолжить',exact:true}).click();
+  await page.getByRole('button',{name:'Добавить источник дохода',exact:true}).click();
+  await page.getByLabel('Источник дохода 1',{exact:true}).fill('SYNTHETIC INCOME');
+  await page.getByLabel('Категория дохода 1',{exact:true}).selectOption({label:'Зарплата'});
+  await page.getByLabel('Доход в месяц 1',{exact:true}).fill('3000,50');
+  await page.getByRole('button',{name:'Сохранить и продолжить',exact:true}).click();
+  await page.getByRole('button',{name:'Добавить обязательство',exact:true}).click();
+  await page.getByLabel('Обязательство 1',{exact:true}).fill('SYNTHETIC RENT');
+  await page.getByLabel('Платёж в месяц 1',{exact:true}).fill('500');
+  await page.getByRole('button',{name:'Сохранить и продолжить',exact:true}).click();
+  await page.getByLabel('Финансовая цель',{exact:true}).fill('SYNTHETIC RESERVE');
+  await page.getByLabel('Сумма цели',{exact:true}).fill('10000');
+  await expect(page.getByTestId('financial-profile-summary')).toContainText('SYNTHETIC DEPOSIT');
+  await page.screenshot({path:'test-results/onboarding-'+test.info().project.name+'.png',fullPage:true});
+  await page.getByRole('button',{name:'Завершить настройку',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Лента',exact:true})).toBeVisible();
+  const snapshot=await page.evaluate(async()=>({p:await(await fetch('/api/financial-profile')).json(),entries:await(await fetch('/api/entries')).json()}));
+  expect(snapshot.p.status).toBe('complete');expect(snapshot.p.profile.accounts[0].openingBalanceMinor).toBe(123456);expect(snapshot.p.profile.incomes[0].monthlyMinor).toBe(300050);expect(snapshot.entries.items).toEqual([]);
+  await page.reload();await expect(page.getByRole('heading',{name:'Лента',exact:true})).toBeVisible();
+  await tab(page,'Выписка').click();await expect(page.getByRole('radio',{name:'Halyk PDF',exact:true})).toBeChecked();
+  await page.getByRole('button',{name:'Добавить операцию',exact:true}).click();
+  const options=page.getByRole('dialog').getByLabel('Категория',{exact:true}).locator('option');await expect(options.nth(1)).toHaveText('Транспорт');await page.keyboard.press('Escape');
+  await tab(page,'Ещё').click();await page.getByRole('button',{name:/Финансовый профиль/}).click();
+  await expect(page.getByTestId('financial-profile-summary')).toContainText('SYNTHETIC RESERVE');
+  await page.getByRole('button',{name:'Изменить ответы',exact:true}).click();
+  await page.getByRole('button',{name:'Сохранить и заполнить позже',exact:true}).click();
+  await page.reload();await expect(page.getByRole('heading',{name:'Лента',exact:true})).toBeVisible();
+  await tab(page,'Ещё').click();await page.getByRole('button',{name:/Финансовый профиль/}).click();
+  await page.getByRole('button',{name:'Продолжить анкету',exact:true}).click();await expect(page.getByLabel('Название счёта 2',{exact:true})).toHaveValue('SYNTHETIC DEPOSIT');
+});
 
 test('вход: неверный пароль → ошибка, верный → лента', async ({ page }) => {
   await login(page, 'wrong-password-1');
