@@ -1,3 +1,4 @@
+import { MAX_NOTE_LENGTH } from '../../../../shared/types';
 import { HttpError, type Store } from '../../env';
 import { now, uuid } from '../../util';
 import { normName, parseAmountMinor, parseDateMs } from './normalize';
@@ -36,7 +37,7 @@ export function normalizeTx(inp: TxInput, nowMs = now()) {
     direction, amountMinor: minor,
     counterparty: String(inp.counterparty ?? '').trim().slice(0, 120),
     categoryId: inp.categoryId || null,
-    note: String(inp.note ?? '').trim().slice(0, 300),
+    note: String(inp.note ?? '').trim().slice(0, MAX_NOTE_LENGTH),
     title: String(inp.title ?? '').trim().slice(0, 120) || undefined,
     bank: inp.bank ? String(inp.bank).slice(0, 30) : undefined,
     currency: 'KZT',

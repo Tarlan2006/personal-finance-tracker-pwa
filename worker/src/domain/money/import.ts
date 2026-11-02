@@ -6,7 +6,7 @@ import { parseCsv } from './csv';
 import { normName, parseAmountMinor, parseDateMs } from './normalize';
 import { insertStatements, normalizeTx } from './entries';
 import { loadMeta } from './meta';
-import type { TxPayload } from '../../../../shared/types';
+import { MAX_NOTE_LENGTH, type TxPayload } from '../../../../shared/types';
 
 export interface Mapping {
   bank?: string; delimiter?: string; hasHeader?: boolean;
@@ -24,7 +24,7 @@ export const BANK_PROFILES: Record<string, { title: string; ready: boolean; mapp
   generic: { title: 'Универсальный CSV (ручная привязка колонок)', ready: true },
   kaspi: { title: 'Kaspi Gold / депозит (PDF)', ready: true },
   halyk: { title: 'Halyk (PDF)', ready: true },
-  freedom: { title: 'Freedom PDF — формат пока не поддержан', ready: false },
+  freedom: { title: 'Freedom (PDF)', ready: true },
 };
 
 export type RowStatus = 'imported' | 'duplicate' | 'rejected';
@@ -74,7 +74,7 @@ export function parseRows(csv: string, m: Mapping): { parsed: Parsed[]; headerLi
         else { parsed.push({ line, reject: `неизвестное направление «${cell(m.directionCol)}»`, preview }); continue; }
       } else direction = a < 0 ? 'out' : 'in';
     }
-    if (cell(m.counterpartyCol).length > 120 || cell(m.noteCol).length > 300) { parsed.push({ line, reject: 'слишком длинное имя или описание; требуется ручная проверка', preview }); continue; }
+    if (cell(m.counterpartyCol).length > 120 || cell(m.noteCol).length > MAX_NOTE_LENGTH) { parsed.push({ line, reject: 'слишком длинное имя или описание; требуется ручная проверка', preview }); continue; }
     let norm;
     try {
       norm = normalizeTx({ direction, amountMinor: minor!, occurredAt, counterparty: cell(m.counterpartyCol), note: cell(m.noteCol), bank: m.bank });
@@ -94,7 +94,7 @@ export async function runImport(store: Store, accountId: string, input: { csv?: 
   const csv = bank !== 'generic' ? await bankPdf(input.pdfBase64 ?? '', bank) : input.csv;
   if (typeof csv !== 'string' || !csv.trim()) throw new HttpError(400, 'empty_file', 'Файл пустой');
   if (new TextEncoder().encode(csv).length > 3 * 1024 * 1024) throw new HttpError(413, 'file_too_large', 'Файл слишком большой');
-  const mapping = bank === 'halyk' ? { bank, delimiter: ';', rejectionCol: 6, dateCol: 0, creditCol: 4, debitCol: 5, counterpartyCol: 2, noteCol: 3 } : bank === 'kaspi' ? { bank, delimiter: ';', rejectionCol: 6, dateCol: 0, amountCol: 1, counterpartyCol: 2, noteCol: 3 } : input.mapping!;
+  const mapping = bank === 'halyk' ? { bank, delimiter: ';', rejectionCol: 6, dateCol: 0, creditCol: 4, debitCol: 5, counterpartyCol: 2, noteCol: 3 } : bank !== 'generic' ? { bank, delimiter: ';', rejectionCol: 6, dateCol: 0, amountCol: 1, counterpartyCol: 2, noteCol: 3 } : input.mapping!;
   const { parsed } = parseRows(csv, mapping);
   // All fallible reads/preparation happen before the financial transaction.
   const meta = await loadMeta(store, accountId);

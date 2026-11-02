@@ -1,8 +1,9 @@
+import { freedomRows, finishFreedomRows, type FreedomRow } from './freedom-pdf';
 import { MAX_IMPORT_ROWS } from './import-limits';
 import { getDocumentProxy } from 'unpdf';
 import { HttpError } from '../../env';
 
-/** Only layouts verified against the supplied Kaspi and Halyk PDFs. No OCR or remote fetch. */
+/** Only layouts verified against the supplied bank PDFs. No OCR or remote fetch. */
 export async function bankPdf(base64: string, bank: string): Promise<string> {
   if (base64.length > 2800000) throw new HttpError(413, 'file_too_large', 'PDF не больше 2 МБ');
   let data: Uint8Array;
@@ -13,12 +14,17 @@ export async function bankPdf(base64: string, bank: string): Promise<string> {
   try { pdf = await getDocumentProxy(data, { verbosity: 0, maxImageSize: 0, useSystemFonts: false, useWorkerFetch: false }); } catch { throw new HttpError(400, 'bad_pdf', 'Не удалось прочитать PDF'); }
   try {
     if (pdf.numPages > 100) throw new HttpError(413, 'too_many_pages', 'Не больше 100 страниц');
-    const rows: string[][] = []; let tables = 0; let signature = false;
+    const rows: string[][] = []; const freedom: FreedomRow[] = []; let tables = 0; let signature = false;
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p); const content = await page.getTextContent();
       const items = content.items.filter((t): t is typeof t & {str: string; transform: number[]} => 'str' in t);
-      if (items.some(t => (bank === 'halyk' ? /halyk|халық|халык/i : /kaspi/i).test(t.str))) signature = true;
+      if (items.some(t => (bank === 'halyk' ? /halyk|халық|халык/i : bank === 'freedom' ? /freedom|фридом/i : /kaspi/i).test(t.str))) signature = true;
       if (items.length > 20000) throw new HttpError(413, 'pdf_too_complex', 'Слишком сложная страница PDF');
+      if (bank === 'freedom') {
+        if (items.some(t => t.str.trim() === 'Детали') || items.some(t => t.transform[4]<132 && /^\d{2}\.\d{2}\.\d{4}$/.test(t.str.trim()))) { freedom.push(...await freedomRows(page, items, MAX_IMPORT_ROWS*2-freedom.length, tables>0)); tables++; }
+        else if(p>1) throw new HttpError(400,'unknown_layout','Страница Freedom без шапки таблицы');
+        page.cleanup();continue;
+      }
       const header = items.find(t => t.str.trim() === (bank === 'halyk' ? 'Transaction description' : 'Операция'));
       if (!header) { if (p > 1 && items.some(t => /^\d{2}\.\d{2}\.(?:\d{2}|\d{4})$/.test(t.str.trim()))) throw new HttpError(400, 'unknown_layout', 'Страница с операциями без известной шапки'); continue; }
       const deposit = items.some(t => t.str.trim() === 'Толық ақпарат');
@@ -56,7 +62,8 @@ export async function bankPdf(base64: string, bank: string): Promise<string> {
         }
       }
     }
-    if (!signature || !tables) throw new HttpError(400, 'unknown_layout', 'Не распознана выписка Kaspi с текстовым слоем');
+    if (!signature || !tables) throw new HttpError(400, 'unknown_layout', 'Не распознана выписка выбранного банка с текстовым слоем');
+    if(bank==='freedom')rows.push(...finishFreedomRows(freedom));
     return 'Дата;Сумма;Контрагент;Описание;Зачисление;Списание;Причина\n' + rows.map(r => r.map(c => '"'+c.replace(/"/g,'""')+'"').join(';')).join('\n');
   } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(400, 'bad_pdf', 'Не удалось разобрать PDF'); } finally { await pdf.cleanup(); }
 }
