@@ -33,6 +33,7 @@ export const subscribeQueue = (f: () => void) => { subs.add(f); return () => { s
 export const getQueueStatus = () => status;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let flushing = false;
+let requestedLogin: string | null = null;
 let currentLogin: string | null = null;
 
 export const listQueue = async (login: string) => (await getAll()).filter(i => i.login === login).sort((a, b) => b.createdAt - a.createdAt);
@@ -75,7 +76,7 @@ let backoff = 5000;
 
 /** Отправляет очередь пачками по 50 через /api/entries/batch. Без постоянного опроса: следующая попытка только после сбоя. */
 export async function flush(login: string): Promise<void> {
-  if (flushing) return; flushing = true;
+  if (flushing) { requestedLogin = login; return; } flushing = true;
   try {
     const items = (await listQueue(login)).filter(i => i.status === 'pending').sort((a, b) => a.createdAt - b.createdAt);
     if (!items.length) { status = { ...status, nextAttemptAt: null }; await refresh(login); return; }
@@ -97,7 +98,13 @@ export async function flush(login: string): Promise<void> {
     status = { ...status, lastResult: err.status === 401 ? 'нужен вход' : `${err.message}${err.status ? ` (${err.status})` : ''}` };
     if (err.status !== 401 && (err.retryable ?? true)) { schedule(login, wait); backoff = Math.min(backoff * 2, 15 * 60_000); }
     for (const i of await listQueue(login)) if (i.status === 'pending') await put({ ...i, attempts: i.attempts + 1, lastError: err.message });
-  } finally { flushing = false; await refresh(login); }
+  } finally {
+    flushing = false; await refresh(login);
+    const requested = requestedLogin; requestedLogin = null;
+    // A new enqueue during an active send is an event, not a polling loop.
+    // Preserve backoff if the send failed and scheduled a retry.
+    if (requested && requested === currentLogin && !timer && navigator.onLine) void flush(requested);
+  }
 }
 
 // ---- шифрование при выходе ----

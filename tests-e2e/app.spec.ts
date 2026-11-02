@@ -9,12 +9,14 @@ async function login(page: Page, pw = PW) {
 async function loggedIn(page: Page) { await login(page); await expect(page.getByRole('heading', { name: 'Лента' })).toBeVisible(); }
 const tab = (page: Page, name: string) => page.getByRole('navigation').getByRole('button', { name });
 async function add(page: Page, amount: string, cp: string, dir: 'Расход' | 'Доход' = 'Расход') {
-  await tab(page, 'Добавить').click();
-  await page.getByRole('button', { name: dir, exact: true }).click();
-  await page.getByLabel('Сумма').fill(amount);
-  await page.getByLabel('Получатель').fill(cp);
-  await page.getByRole('button', { name: 'Сохранить' }).click();
-  await expect(page.getByRole('heading', { name: 'Лента' })).toBeVisible();
+  await page.getByRole('button',{name:'Добавить операцию',exact:true}).click();
+  const sheet=page.getByRole('dialog',{name:'Добавить',exact:true});
+  await sheet.getByRole('button',{name:dir,exact:true}).click();
+  await sheet.getByLabel('Сумма',{exact:true}).fill(amount);
+  await sheet.getByLabel('Получатель',{exact:true}).fill(cp);
+  await sheet.getByRole('button',{name:'Сохранить',exact:true}).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(page.getByRole('heading',{name:'Лента',exact:true})).toBeVisible();
 }
 
 test.describe.configure({ mode: 'serial' });
@@ -183,9 +185,77 @@ test('очередь шифруется при выходе и восстана�
   await expect(page.getByText('СекретныйПолучатель')).toBeVisible({ timeout: 15_000 });
 });
 
+test('UI 2.0: док, шторка, быстрые суммы и настоящая автокатегория', async ({page}) => {
+  await loggedIn(page);
+  await expect(page.getByRole('navigation').getByRole('button')).toHaveText(['Лента','Отчёты','Выписка','Ещё']);
+  const fab=page.getByRole('button',{name:'Добавить операцию',exact:true});
+  const box=await fab.boundingBox(),dock=await page.getByRole('navigation').boundingBox();
+  expect(box!.width).toBe(52);expect(box!.height).toBe(52);expect(box!.y+box!.height).toBeLessThan(dock!.y);
+  await page.evaluate(async()=>{
+    const categories=(await(await fetch('/api/categories')).json()).categories;
+    const categoryId=categories.find((c:any)=>c.name==='Магазины').id;
+    const r=await fetch('/api/rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pattern:'UI2 Synthetic',direction:'out',categoryId})});if(!r.ok)throw new Error('Rule setup failed');
+  });
+  await fab.click();const sheet=page.getByRole('dialog',{name:'Добавить',exact:true});await expect(sheet).toBeVisible();
+  await expect(sheet.getByLabel('Сумма',{exact:true})).toBeFocused();
+  await sheet.getByLabel('Сумма',{exact:true}).fill('0,25');
+  await sheet.getByRole('button',{name:/^\+1.000 ₸$/}).click();await sheet.getByRole('button',{name:/^\+2.500 ₸$/}).click();
+  await expect(sheet.getByLabel('Сумма',{exact:true})).toHaveValue('3500,25');
+  await sheet.getByLabel('Получатель').fill('Unknown Synthetic');await expect(page.getByTestId('auto-category')).toHaveCount(0);
+  await sheet.getByLabel('Получатель').fill('UI2 Synthetic Shop');await expect(page.getByTestId('auto-category')).toContainText('Магазины');
+  await sheet.getByRole('button',{name:'Доход',exact:true}).click();await expect(page.getByTestId('auto-category')).toHaveCount(0);
+  await sheet.getByRole('button',{name:'Расход',exact:true}).click();await expect(page.getByTestId('auto-category')).toBeVisible();
+  await sheet.getByLabel('Категория',{exact:true}).selectOption({label:'Другое'});await expect(page.getByTestId('auto-category')).toHaveCount(0);
+  await sheet.getByLabel('Категория',{exact:true}).selectOption('');await expect(page.getByTestId('auto-category')).toBeVisible();
+  expect(await page.evaluate(()=>document.body.style.overflow)).toBe('hidden');
+  await page.screenshot({path:`test-results/redesign-add-${test.info().project.name}.png`});
+  await sheet.getByRole('button',{name:'Сохранить',exact:true}).click();await expect(sheet).toHaveCount(0);
+  await expect(page.getByRole('button',{name:/UI2 Synthetic Shop 3.500,25/})).toBeVisible();
+  const entry=await page.evaluate(async()=>{const r=await(await fetch('/api/entries?q=UI2%20Synthetic%20Shop')).json();return r.items[0];});
+  expect(entry.payload.amountMinor).toBe(350025);expect(entry.payload.categoryId).toBeNull();expect(entry.effectiveCategoryId).toBeTruthy();
+  await page.getByRole('button',{name:'✨ Авто-правила',exact:true}).click();await expect(page.getByRole('button',{name:/UI2 Synthetic Shop 3.500,25/})).toBeVisible();
+  await page.getByRole('button',{name:'Все',exact:true}).click();await page.locator('.island-toast').waitFor({state:'hidden'});
+  await page.screenshot({path:`test-results/redesign-feed-${test.info().project.name}.png`});
+  await fab.click();await sheet.getByRole('button',{name:'Сохранить',exact:true}).focus();await page.keyboard.press('Tab');
+  await expect(sheet.getByRole('button',{name:'Закрыть',exact:true})).toBeFocused();await page.keyboard.press('Escape');
+  await expect(sheet).toHaveCount(0);await expect(fab).toBeFocused();expect(await page.evaluate(()=>document.body.style.overflow)).not.toBe('hidden');
+  await tab(page,'Выписка').click();await expect(page.getByRole('heading',{name:'Выписка',exact:true})).toBeVisible();
+  await expect(page.getByLabel('Банк',{exact:true})).toBeVisible();
+});
+
+test('фильтр ленты находит доход за пределами первой страницы', async ({page}) => {
+  await loggedIn(page);
+  await page.evaluate(async()=>{
+    const occurredAt=Date.now();
+    for(let start=0;start<55;start+=50){
+      const items=Array.from({length:Math.min(50,55-start)},(_,j)=>({id:`pagination-ui2-${start+j}`,direction:start+j===54?'in':'out',amountMinor:100,counterparty:start+j===54?'PAGINATION UI2 IN':'PAGINATION UI2 OUT',occurredAt:occurredAt-(start+j)*1000}));
+      const response=await fetch('/api/entries/batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})});
+      const data=await response.json();if(!response.ok||data.results.some((r:any)=>!r.ok))throw new Error('Pagination fixture failed');
+    }
+  });
+  await page.getByLabel('Поиск').fill('PAGINATION UI2');await page.getByRole('button',{name:'Доходы',exact:true}).click();
+  await expect(page.getByRole('button',{name:/PAGINATION UI2 IN/})).toBeVisible();
+  await expect(page.getByRole('button',{name:/PAGINATION UI2 OUT/})).toHaveCount(0);
+});
+
+test('быстрое добавление: вторая запись отправляется после уже активной очереди', async ({page}) => {
+  await loggedIn(page);
+  let release!:()=>void,started!:()=>void,first=true;
+  const held=new Promise<void>(resolve=>{release=resolve;}),sending=new Promise<void>(resolve=>{started=resolve;});
+  await page.route('**/api/entries/batch',async route=>{if(first){first=false;started();await held;}await route.continue();});
+  try{
+    await add(page,'11','QUICK UI2 ONE');await sending;
+    await add(page,'22','QUICK UI2 TWO');release();
+    await expect(page.getByRole('button',{name:/QUICK UI2 ONE 11/})).toBeVisible();
+    await expect(page.getByRole('button',{name:/QUICK UI2 TWO 22/})).toBeVisible();
+    const entries=await page.evaluate(async()=> (await(await fetch('/api/entries?q=QUICK%20UI2')).json()).items);
+    expect(entries).toHaveLength(2);expect(entries.map((e:any)=>e.payload.amountMinor).sort((a:number,b:number)=>a-b)).toEqual([1100,2200]);
+  }finally{release();await page.unroute('**/api/entries/batch');}
+});
+
 test('раскладка: нет горизонтального скролла, нижняя панель и safe-area на всех экранах', async ({ page }) => {
   await loggedIn(page);
-  for (const name of ['Лента', 'Отчёты', 'Добавить', 'Ещё']) {
+  for (const name of ['Лента', 'Отчёты', 'Выписка', 'Ещё']) {
     await tab(page, name).click();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow, name).toBeLessThanOrEqual(0);

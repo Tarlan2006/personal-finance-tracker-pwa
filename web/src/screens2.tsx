@@ -75,15 +75,15 @@ function PickCategory({ cp, dir, cats, onClose }: { cp: { name: string; display:
 
 // ---------- Ещё ----------
 type Sub = null | 'cats' | 'keys' | 'devices' | 'import' | 'sync' | 'password' | 'theme';
-export function More() {
+export function More({ onImported, onViewFeed }: { onImported?: (n:number)=>void; onViewFeed?:()=>void } = {}) {
   const { name, login } = useAppState(); const [sub, setSub] = useState<Sub>(null); const [lerr, setLerr] = useState('');
-  if (sub) return <><button className="back" onClick={() => setSub(null)}>‹ Ещё</button>{{ cats: <Categories />, keys: <Keys />, devices: <Devices />, import: <Import />, sync: <Sync />, password: <Password />, theme: <Theme /> }[sub]}</>;
+  if (sub) return <><button className="back" onClick={() => setSub(null)}>‹ Ещё</button>{{ cats: <Categories />, keys: <Keys />, devices: <Devices />, import: <Import onImported={onImported} onViewFeed={onViewFeed} />, sync: <Sync />, password: <Password />, theme: <Theme /> }[sub]}</>;
   const item = (s: Sub, label: string, hint?: string) => <button className="row" onClick={() => setSub(s)}><span className="grow">{label}</span><span className="sub">{hint}</span><span className="sub">›</span></button>;
   return <>
     <h1>Ещё</h1>
     <div className="group"><div className="row"><div className="grow"><div>{name}</div><div className="sub">{login}</div></div></div></div>
     <h2>Данные</h2>
-    <div className="group">{item('import', 'Загрузить выписку (CSV)')}{item('cats', 'Категории и правила')}<a className="row" href="/api/export.csv" download style={{ textDecoration: 'none' }}><span className="grow">Экспорт CSV</span><span className="sub">›</span></a></div>
+    <div className="group">{item('import', 'Загрузить выписку')}{item('cats', 'Категории и правила')}<a className="row" href="/api/export.csv" download style={{ textDecoration: 'none' }}><span className="grow">Экспорт CSV</span><span className="sub">›</span></a></div>
     <h2>Интеграции</h2><div className="group">{item('keys', 'Быстрые команды (ключи)')}</div>
     <h2>Приложение</h2><div className="group">{item('sync', 'Синхронизация')}{item('theme', 'Тема')}</div>
     <h2>Безопасность</h2><div className="group">{item('devices', 'Устройства')}{item('password', 'Сменить пароль')}</div>
@@ -192,7 +192,7 @@ function Sync() {
 
 // ---------- Импорт CSV ----------
 const GUESS: Record<string, RegExp> = { date: /дата|date/i, amount: /сумма|amount|итого/i, cp: /получател|отправител|контрагент|merchant|название|наименование|recipient|counterparty/i, note: /назначен|описан|детал|комментар|details|description|операц/i };
-function Import() {
+export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>void; onViewFeed?:()=>void } = {}) {
   const [profiles, setProfiles] = useState<Array<{id: string; title: string; ready: boolean}>>([]);
   const [bank, setBank] = useState('generic');
   useEffect(() => { api('GET', '/api/import/profiles').then(r => setProfiles(r.profiles)).catch(e => setErr(e.message)); }, []);
@@ -219,13 +219,13 @@ function Import() {
   }
   const body = (dryRun: boolean) => ({ bank, pdfBase64: file!.pdfBase64, csv: file!.text, filename: file!.name, dryRun, mapping: { delimiter: file!.delim, hasHeader: true, dateCol: m.date, counterpartyCol: m.cp >= 0 ? m.cp : undefined, noteCol: m.note >= 0 ? m.note : undefined,
     ...(m.mode === 'signed' ? { amountCol: m.amount } : m.mode === 'split' ? { debitCol: m.debit >= 0 ? m.debit : undefined, creditCol: m.credit >= 0 ? m.credit : undefined } : { amountCol: m.amount, directionCol: m.dirCol, inValues: m.inV.split(',').map(s => s.trim()).filter(Boolean), outValues: m.outV.split(',').map(s => s.trim()).filter(Boolean) }) } });
-  async function run(dry: boolean) { setBusy(true); setErr(''); try { const r = await api('POST', '/api/import', body(dry)); setRep(r); if (!dry) bump(); } catch (e) { setErr((e as ApiError).message); } finally { setBusy(false); } }
+  async function run(dry: boolean) { setBusy(true); setErr(''); try { const r = await api('POST', '/api/import', body(dry)); setRep(r); if (!dry) { bump(); onImported?.(r.imported); } } catch (e) { setErr((e as ApiError).message); } finally { setBusy(false); } }
   const sel = (label: string, key: 'date' | 'amount' | 'cp' | 'note' | 'debit' | 'credit' | 'dirCol', optional = false) => <Field label={label}><select aria-label={label} value={m[key]} onChange={e => setM({ ...m, [key]: Number(e.target.value) })}>{optional && <option value={-1}>— нет —</option>}{file!.header.map((h, i) => <option key={i} value={i}>{h || `Колонка ${i + 1}`}</option>)}</select></Field>;
   return <>
-    <h1>Выписка</h1>
+    <div className="screen-kicker">ИМПОРТ ОПЕРАЦИЙ</div><h1>Выписка</h1><div className="import-hero" aria-hidden="true">↥</div>
     <p className="muted">Каждая строка файла попадёт в отчёт: добавлена, пропущена как повтор или отклонена с причиной. Kaspi и Halyk: PDF с текстовым слоем. Freedom PDF пока не поддержан. Для других файлов — универсальный CSV. За один раз — до 500 строк (в PDF считаются также продолжения и служебные строки). Большую выписку разделите по датам, не разбивая операции одного дня.</p>
-    <Field label="Банк"><select aria-label="Банк" value={bank} onChange={e => { setBank(e.target.value); setFile(null); setRep(null); setErr(''); }}>{profiles.filter(p => p.ready).map(p => <option key={p.id} value={p.id}>{p.title}</option>)}</select></Field>
-    <input key={bank} aria-label="Файл выписки" type="file" accept={bank === 'generic' ? ' .csv,.txt,text/csv'.trim() : '.pdf,application/pdf'} onChange={e => pick(e.target.files?.[0])} />
+    <Field label="Банк"><select aria-label="Банк" disabled={busy} value={bank} onChange={e => { setBank(e.target.value); setFile(null); setRep(null); setErr(''); }}>{profiles.filter(p => p.ready).map(p => <option key={p.id} value={p.id}>{p.title}</option>)}</select></Field>
+    <input disabled={busy} className="statement-file" key={bank} aria-label="Файл выписки" type="file" accept={bank === 'generic' ? ' .csv,.txt,text/csv'.trim() : '.pdf,application/pdf'} onChange={e => pick(e.target.files?.[0])} />
     {file && <>
       {bank === 'generic' && <><h2>Колонки</h2>{sel('Дата', 'date')}
       <div className="seg"><button className={m.mode === 'signed' ? 'on' : ''} onClick={() => setM({ ...m, mode: 'signed' })}>Сумма со знаком</button><button className={m.mode === 'split' ? 'on' : ''} onClick={() => setM({ ...m, mode: 'split' })}>Две колонки</button><button className={m.mode === 'dir' ? 'on' : ''} onClick={() => setM({ ...m, mode: 'dir' })}>Колонка типа</button></div>
@@ -235,9 +235,11 @@ function Import() {
       {err && <div className="err" role="alert">{err}</div>}
       <div style={{ display: 'flex', gap: 8 }}><button className="btn sec" disabled={busy} onClick={() => run(true)}>Проверить</button><button className="btn" disabled={busy} onClick={() => run(false)}>Импортировать</button></div>
     </>}
+    {busy && <div className="parsing-state" role="status"><span className="spinner"/>Разбираем файл и проверяем операции…</div>}
     {rep && <><h2>{rep.dryRun ? 'Проверка (ничего не записано)' : 'Готово'}</h2>
       <div className="group" data-testid="import-report"><div className="row"><span className="grow">Всего строк</span><b>{rep.total}</b></div><div className="row"><span className="grow">{rep.dryRun ? 'Будет добавлено' : 'Добавлено'}</span><b>{rep.imported}</b></div><div className="row"><span className="grow">Уже были (повторы)</span><b>{rep.duplicates}</b></div><div className="row"><span className="grow">Отклонено</span><b>{rep.rejected}</b></div></div>
       {rep.rows.filter((r: any) => r.status !== 'imported').slice(0, 100).map((r: any) => <div className="banner" key={r.line}>Строка {r.line}: {r.status === 'duplicate' ? 'повтор' : r.reason}<div className="sub ell">{r.preview}</div></div>)}
+      {!rep.dryRun && onViewFeed && <button className="btn sec" style={{marginBottom:16}} onClick={onViewFeed}>Посмотреть в Ленте</button>}
       {!rep.dryRun && rep.newCounterparties.length > 0 && <div className="banner">Новых получателей без категории: {rep.newCounterparties.length}. Назначьте категории в «Отчётах».</div>}</>}
   </>;
 }

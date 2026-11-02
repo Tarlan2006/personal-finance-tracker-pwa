@@ -2,23 +2,31 @@ import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './tokens.css'; import './app.css';
 import { api, setUnauthorizedHandler } from './api';
-import { Icons, applyTheme, savedTheme, setState, useAppState } from './ui';
+import { Icons, applyTheme, savedTheme, setState, useAppState, Sheet } from './ui';
 import { Add, Feed, Login, afterLogin } from './screens1';
-import { More, Reports } from './screens2';
+import { Import, More, Reports } from './screens2';
 
 applyTheme(savedTheme());
 setUnauthorizedHandler(() => setState({ login: null, ready: true }));
 
-const TABS = [['feed', 'Лента', Icons.feed], ['reports', 'Отчёты', Icons.chart], ['add', 'Добавить', Icons.plus], ['more', 'Ещё', Icons.more]] as const;
+const TABS = [['feed', 'Лента', Icons.feed], ['reports', 'Отчёты', Icons.chart], ['import', 'Выписка', Icons.upload], ['more', 'Ещё', Icons.more]] as const;
 
 function App() {
   const { login, ready } = useAppState(); const [tab, setTab] = useState<(typeof TABS)[number][0]>('feed');
+  const [adding,setAdding] = useState(false); const [toast,setToast] = useState('');
   useEffect(() => { api('GET', '/api/me').then(() => afterLogin()).catch(() => setState({ ready: true })); }, []);
+  useEffect(() => { if(!toast)return; const timer=setTimeout(()=>setToast(''),3200); return ()=>clearTimeout(timer); },[toast]);
+  useEffect(() => { if(!login){setAdding(false);setTab('feed');setToast('');} },[login]);
   if (!ready) return null;
   if (!login) return <Login />;
+  const viewFeed=()=>setTab('feed');
+  const imported=(count:number)=>setToast(count ? `Добавлено операций: ${count}` : 'Новых операций нет — отчёт готов');
   return <>
-    <div className="app">{tab === 'feed' ? <Feed /> : tab === 'reports' ? <Reports /> : tab === 'add' ? <Add onDone={() => setTab('feed')} /> : <More />}</div>
-    <nav className="tabbar" aria-label="Разделы"><div>{TABS.map(([k, l, ic]) => <button key={k} className={'tab' + (tab === k ? ' on' : '')} aria-current={tab === k ? 'page' : undefined} onClick={() => setTab(k)}>{ic}<span>{l}</span></button>)}</div></nav>
+    <main className="app" aria-hidden={adding || undefined}>{tab === 'feed' ? <Feed onImport={()=>setTab('import')} /> : tab === 'reports' ? <Reports /> : tab === 'import' ? <Import onImported={imported} onViewFeed={viewFeed} /> : <More onImported={imported} onViewFeed={viewFeed} />}</main>
+    <button className="fab" aria-label="Добавить операцию" title="Добавить операцию" disabled={adding} aria-hidden={adding || undefined} onClick={e=>{e.currentTarget.focus();setAdding(true);}}>{Icons.plus}</button>
+    <nav className="tabbar" aria-label="Разделы" aria-hidden={adding || undefined}><div>{TABS.map(([k,l,ic])=><button key={k} className={'tab'+(tab===k?' on':'')} aria-current={tab===k?'page':undefined} onClick={()=>setTab(k)}>{ic}<span>{l}</span></button>)}</div></nav>
+    {adding && <Sheet title="Добавить" onClose={()=>setAdding(false)}><Add onDone={()=>{setAdding(false);setTab('feed');setToast('Операция сохранена');}} /></Sheet>}
+    {toast && <div className="island-toast" role="status">{Icons.check}<span>{toast}</span></div>}
   </>;
 }
 createRoot(document.getElementById('root')!).render(<App />);
