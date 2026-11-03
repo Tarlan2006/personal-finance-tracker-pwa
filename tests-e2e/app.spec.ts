@@ -334,9 +334,18 @@ test('раскладка: нет горизонтального скролла, 
   await page.screenshot({ path: `test-results/shot-${test.info().project.name}.png` });
 });
 
-test('прокрутка страницы и шторки восстанавливается после закрытия', async ({page,context})=>{
+test('прокрутка страницы и шторки восстанавливается после закрытия', async ({page,context,browserName})=>{
   await page.setViewportSize({width:393,height:600});await loggedIn(page);await tab(page,'Ещё').click();
   expect(await page.evaluate(()=>document.documentElement.scrollHeight>innerHeight)).toBe(true);
+  if(browserName==='webkit'){
+    // Mobile WebKit has no wheel/CDP swipe API: check scroll ownership and restoration here.
+    await page.evaluate(()=>window.scrollTo(0,260));await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(40);
+    const before=await page.evaluate(()=>scrollY);await page.getByRole('button',{name:'Добавить операцию',exact:true}).click();
+    const sheet=page.getByRole('dialog',{name:'Добавить',exact:true});await expect(sheet).toBeVisible();await sheet.evaluate(el=>Promise.all(el.getAnimations().map(a=>a.finished)));
+    expect(await sheet.evaluate(el=>el.scrollHeight>el.clientHeight)).toBe(true);await sheet.evaluate(el=>el.scrollTo(0,100));await expect.poll(()=>sheet.evaluate(el=>el.scrollTop)).toBeGreaterThan(20);
+    expect(await page.evaluate(()=>document.body.style.position)).toBe('fixed');await sheet.getByRole('button',{name:'Закрыть',exact:true}).click();await expect(sheet).toHaveCount(0);
+    await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThanOrEqual(before-5);await page.evaluate(()=>window.scrollTo(0,0));await expect.poll(()=>page.evaluate(()=>scrollY)).toBe(0);return;
+  }
   await page.mouse.move(180,420);await page.mouse.wheel(0,220);
   await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(40);
   const cdp=await context.newCDPSession(page);

@@ -9,15 +9,19 @@ const DB = 'qarjy-queue';
 function open(): Promise<IDBDatabase> {
   return new Promise((res, rej) => {
     const r = indexedDB.open(DB, 1);
-    r.onupgradeneeded = () => { r.result.createObjectStore('queue', { keyPath: 'id' }); r.result.createObjectStore('meta'); };
-    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    let settled=false;
+    const fail=()=>{if(!settled){settled=true;clearTimeout(timer);let error;try{error=r.error;}catch{}rej(error??new DOMException('Локальное хранилище недоступно','InvalidStateError'));}};
+    const timer=setTimeout(fail,5000);
+    r.onblocked=fail;
+    r.onupgradeneeded = () => {if(settled){r.transaction?.abort();return;}r.result.createObjectStore('queue', { keyPath: 'id' }); r.result.createObjectStore('meta'); };
+    r.onsuccess = () => {if(settled){r.result.close();return;}settled=true;clearTimeout(timer);res(r.result);}; r.onerror = fail;
   });
 }
 async function tx<T>(store: string, mode: IDBTransactionMode, f: (s: IDBObjectStore) => IDBRequest<T> | void): Promise<T> {
   const db = await open();
   return new Promise((res, rej) => {
     const t = db.transaction(store, mode); const r = f(t.objectStore(store));
-    t.oncomplete = () => { db.close(); res((r as IDBRequest<T>)?.result as T); }; t.onerror = () => { db.close(); rej(t.error); };
+    t.oncomplete = () => { db.close(); res((r as IDBRequest<T>)?.result as T); }; t.onerror = t.onabort = () => { db.close(); rej(t.error??new DOMException('Не удалось сохранить локальные данные','AbortError')); };
   });
 }
 const getAll = (): Promise<QItem[]> => tx('queue', 'readonly', s => s.getAll());

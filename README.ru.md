@@ -14,6 +14,9 @@ npm run build        # клиент в web/dist
 npm run typecheck
 npm test             # Vitest: сервер/клиент, реальный SQLite
 npm run test:e2e     # Playwright, эмуляция iPhone, тёмная и светлая тема
+npx playwright install webkit # один раз: тестовый движок WebKit
+npm run test:safari  # WebKit, две мобильные темы; не физический Safari iOS
+npm run verify:safari -- https://qarjy.tarlan-b06.workers.dev # публичные проверки без входа/записи
 npm run scan-secrets
 npm run ops-report   # обращения к хранилищу на типичный сеанс
 npm run dev          # локальный сервер http://localhost:8787 (память; DB_FILE=файл.sqlite для файла)

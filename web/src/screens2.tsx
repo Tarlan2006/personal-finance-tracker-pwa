@@ -245,8 +245,9 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
     {bank!=='generic'&&<a className="sample-download" href={'/examples/'+bank+'.pdf'} download>Скачать пример {bank==='halyk'?'Halyk':bank==='kaspi'?'Kaspi':'Freedom'} PDF · вымышленные данные</a>}
     {bank==='kaspi'&&<a className="sample-download" href="/examples/kaspi-russian.pdf" download>Пример Kaspi на русском · вымышленные данные</a>}
     {err&&!file&&<div className="err" role="alert">{err}</div>}
-    <input disabled={busy} className="statement-file" key={bank} aria-label="Файл выписки" type="file" accept={bank === 'generic' ? ' .csv,.txt,text/csv'.trim() : '.pdf,application/pdf'} onChange={e => pick(e.target.files?.[0])} />
+    <input disabled={busy} className="statement-file" key={bank} aria-label="Файл выписки" type="file" accept={bank === 'generic' ? ' .csv,.txt,text/csv'.trim() : '.pdf,application/pdf'} onChange={e => {const selected=e.currentTarget.files?.[0];e.currentTarget.value='';void pick(selected);}} />
     {file && <>
+      <p className="sub" data-testid="selected-statement" style={{overflowWrap:'anywhere'}}>Выбран файл: {file.name}</p>
       {bank === 'generic' && <><h2>Колонки</h2>{sel('Дата', 'date')}
       <div className="seg"><button className={m.mode === 'signed' ? 'on' : ''} onClick={() => setM({ ...m, mode: 'signed' })}>Сумма со знаком</button><button className={m.mode === 'split' ? 'on' : ''} onClick={() => setM({ ...m, mode: 'split' })}>Две колонки</button><button className={m.mode === 'dir' ? 'on' : ''} onClick={() => setM({ ...m, mode: 'dir' })}>Колонка типа</button></div>
       {m.mode === 'split' ? <>{sel('Списание (расход)', 'debit', true)}{sel('Зачисление (доход)', 'credit', true)}</> : sel('Сумма', 'amount')}

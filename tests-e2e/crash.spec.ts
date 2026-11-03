@@ -15,13 +15,13 @@ async function questionnaire(page:Page){
  await page.getByRole('navigation').getByRole('button',{name:'Ещё',exact:true}).click();await page.getByRole('button',{name:/Финансовый профиль/}).click();await page.getByRole('button',{name:'Продолжить анкету',exact:true}).click();
 }
 test.beforeEach(async({page})=>{await page.setExtraHTTPHeaders({'CF-Connecting-IP':'198.18.0.2'});await login(page);});
-test('краш: семь счетов трёх банков, прокрутка и точные остатки',async({page})=>{
+test('краш: семь счетов трёх банков, прокрутка и точные остатки',async({page,browserName})=>{
  await questionnaire(page);
  for(const [i,a] of scenario.accounts.entries()){
   await page.getByRole('button',{name:'+ '+a.bank,exact:true}).click();
   await page.getByLabel(`Название счёта ${i+1}`,{exact:true}).fill(a.name);await page.getByLabel(`Вид счёта ${i+1}`,{exact:true}).selectOption(a.kind);await page.getByLabel(`Начальный остаток счёта ${i+1}`,{exact:true}).fill(String(a.minor/100));
  }
- await page.evaluate(()=>window.scrollTo(0,0));await page.mouse.wheel(0,1200);await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(100);
+ await page.evaluate(()=>window.scrollTo(0,0));if(browserName==='webkit')await page.evaluate(()=>window.scrollBy(0,1200));else await page.mouse.wheel(0,1200);await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(100);
  await page.getByRole('button',{name:'Сохранить и заполнить позже',exact:true}).click();await expect(page.getByRole('heading',{name:'Финансовый профиль',exact:true})).toBeVisible();
  const p=await page.evaluate(async()=>(await(await fetch('/api/financial-profile')).json()).profile);
  expect(p.accounts).toHaveLength(7);expect(p.accounts.reduce((n:number,a:any)=>n+a.openingBalanceMinor,0)).toBe(scenario.expectedOpeningMinor);
