@@ -8,7 +8,7 @@ for(const mode of ['missing','throws','rejects'])test(`Service Worker: ${mode} �
  await context.route('**/sw.js',route=>route.fulfill({status:200,contentType:'application/javascript',body:deny+'\n'+readFileSync('web/public/sw.js','utf8')}));
  await page.goto('/');
  await page.evaluate(async()=>{
-  await navigator.serviceWorker.register('/sw.js');await navigator.serviceWorker.ready;
+  await navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'});await navigator.serviceWorker.ready;
   if(!navigator.serviceWorker.controller)await new Promise<void>(resolve=>navigator.serviceWorker.addEventListener('controllerchange',()=>resolve(),{once:true}));
  });
  await page.reload();await expect(page.getByLabel('Логин',{exact:true})).toBeVisible();

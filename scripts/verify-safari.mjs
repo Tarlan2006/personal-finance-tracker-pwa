@@ -22,7 +22,7 @@ try{
   const context=await browser.newContext({viewport:{width:393,height:852},isMobile:true,hasTouch:true});
   try{const deny=`Object.defineProperty(self,'caches',{get(){if('${mode}'==='throws')throw new Error('Synthetic denied');if('${mode}'==='rejects')return {open:async()=>{throw new Error('Synthetic denied');},keys:async()=>{throw new Error('Synthetic denied');}};return undefined;}});`;
    await context.route(origin+'/sw.js',route=>route.fulfill({contentType:'application/javascript',body:deny+'\n'+sw}));const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(origin);
-   await page.evaluate(async()=>{await navigator.serviceWorker.register('/sw.js');await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}));});
+   await page.evaluate(async()=>{await navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'});await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}));});
    await page.reload();await page.getByLabel('Логин',{exact:true}).waitFor();await context.setOffline(true);const response=await page.reload();await page.getByRole('button',{name:'Попробовать снова'}).waitFor();assert(response.status()===503,mode+' cache: offline retry page');
    await context.setOffline(false);await page.getByRole('button',{name:'Попробовать снова'}).click();await page.getByLabel('Логин',{exact:true}).waitFor();assert(errors.length===0,mode+' cache: online recovery without page errors');
   }finally{await context.close();}
@@ -45,7 +45,7 @@ try{
  try{let fixed=false;
   const broken="self.addEventListener('install',e=>e.waitUntil(self.skipWaiting()));self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));self.addEventListener('fetch',e=>{if(new URL(e.request.url).pathname==='/')e.respondWith(Promise.reject(new Error('Synthetic legacy cache failure')));});";
   await context.route(origin+'/sw.js',route=>route.fulfill({contentType:'application/javascript',body:fixed?sw:broken}));const page=await context.newPage();await page.goto(origin);await page.getByLabel('Логин',{exact:true}).waitFor();
-  await page.evaluate(async()=>{await navigator.serviceWorker.register('/sw.js');await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}));});
+  await page.evaluate(async()=>{await navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'});await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}));});
   assert(await page.evaluate(async()=>{try{await fetch('/');return false;}catch{return true;}}),'legacy SW failure reproduced');fixed=true;
   await page.evaluate(async()=>{const r=await navigator.serviceWorker.getRegistration();await r.update();const pending=r.installing||r.waiting;if(pending&&pending.state!=='activated')await new Promise((resolve,reject)=>pending.addEventListener('statechange',()=>{if(pending.state==='activated')resolve();if(pending.state==='redundant')reject(new Error('Update failed'));}));});
   await page.reload();await page.getByLabel('Логин',{exact:true}).waitFor();assert(true,'legacy SW replaced without clearing user storage');
