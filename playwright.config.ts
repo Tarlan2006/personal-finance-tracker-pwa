@@ -11,5 +11,5 @@ export default defineConfig({
   use: { locale: 'ru-RU', baseURL: 'http://localhost:8799', trace: 'off' },
   projects: [iphone('iPhone15Pro-dark', 393, 852, 'dark'), iphone('iPhone17Pro-light', 402, 874, 'light'),iphone('webkit-iPhone-dark',393,852,'dark','webkit'),iphone('webkit-iPhone-light',402,874,'light','webkit')],
   webServer: { command: 'npx tsx scripts/dev-server.ts', url: 'http://localhost:8799/api/health', reuseExistingServer: false, timeout: 60_000,
-    env: { PORT: '8799', SEED_ACCOUNT: 'owner:e2e-test-password-1', SEED_ACCOUNTS:'zz-crash:e2e-crash-password-1,zz-crash-other:e2e-crash-password-1,zz-safari:e2e-safari-password-1,zz-history:e2e-history-password-1' } },
+    env: { PORT: '8799', SEED_ACCOUNT: 'owner:e2e-test-password-1', SEED_ACCOUNTS:'zz-crash:e2e-crash-password-1,zz-crash-other:e2e-crash-password-1,zz-safari:e2e-safari-password-1,zz-history:e2e-history-password-1,zz-scroll:e2e-scroll-password-1' } },
 });

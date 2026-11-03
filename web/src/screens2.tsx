@@ -1,6 +1,7 @@
 import { HistoryPanel } from './history';
 import { ImportReportView } from './import-report';
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import {shiftDocumentScroll} from './scroll-lock';
 import { api, ApiError, pauseRemainingSec } from './api';
 import { getQueueStatus, subscribeQueue, listQueue, retryFailed, flush } from './queue';
 import { applyTheme, bump, Field, fmt, getState, setState, loadCats, monthLabel, savedTheme, shiftMonth, Sheet, thisMonth, useAppState, type Cat } from './ui';
@@ -24,9 +25,29 @@ export function Reports() {
   const { cats, version } = useAppState();
   const [month, setMonth] = useState(thisMonth()); const [dir, setDir] = useState<'out' | 'in'>('out'); const [s, setS] = useState<Summary | null>(null); const [err, setErr] = useState('');
   const [pick, setPick] = useState<Summary['byCounterparty']['out'][number] | null>(null);
-  useEffect(() => { let active=true;setErr('');setS(null); api('GET', '/api/reports/summary?month=' + month).then(r=>{if(active)setS(r);}).catch(e=>{if(active)setErr(e.message);});return ()=>{active=false;}; }, [month, version]);
+  const root=useRef<HTMLDivElement>(null),shown=useRef(s),shownDir=useRef(dir);
+  shown.current=s;shownDir.current=dir;
+  const anchor=useRef<{name:string;top:number;month:string;dir:'out'|'in'}|null>(null);
+  useEffect(() => {
+    let active=true;
+    // Keep the same month's mounted rows while bindings and totals refresh.
+    if(shown.current?.month!==month){setS(null);setErr('');anchor.current=null;}
+    const remember=()=>{
+      anchor.current=null;if(shown.current?.month!==month)return;
+      const row=Array.from(root.current?.querySelectorAll<HTMLElement>('[data-counterparty]')??[]).find(el=>{const r=el.getBoundingClientRect();return r.bottom>0&&r.top<innerHeight;});
+      if(row)anchor.current={name:row.dataset.counterparty!,top:row.getBoundingClientRect().top,month,dir:shownDir.current};
+    };
+    api('GET','/api/reports/summary?month='+month).then(r=>{if(active){remember();setS(r);setErr('');}}).catch(e=>{if(active){remember();setErr(e.message);}});
+    return ()=>{active=false;};
+  }, [month, version]);
+  useLayoutEffect(()=>{
+    const saved=anchor.current;anchor.current=null;
+    if(!saved||saved.month!==month||saved.dir!==dir)return;
+    const row=Array.from(root.current?.querySelectorAll<HTMLElement>('[data-counterparty]')??[]).find(el=>el.dataset.counterparty===saved.name);
+    if(row)shiftDocumentScroll(row.getBoundingClientRect().top-saved.top);
+  },[s,err,month,dir]);
   const total = s ? s.totals[dir] : 0; const catRows = s?.byCategory[dir] ?? []; const cpRows = s?.byCounterparty[dir] ?? [];
-  return <>
+  return <div ref={root} style={{overflowAnchor:'none'}}>
     <h1>Отчёты</h1>
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
       <button className="btn small sec" aria-label="Предыдущий месяц" onClick={() => setMonth(shiftMonth(month, -1))}>‹</button>
@@ -50,29 +71,31 @@ export function Reports() {
           <div style={{ textAlign: 'right' }}><div className="amt">{fmt(c.sum)}</div><div className="sub">{c.count} · {total ? Math.round((c.sum / total) * 100) : 0}%</div></div></div>)}</div>
         <h2>По {dir === 'out' ? 'получателям' : 'отправителям'}</h2>
         <div className="group">{cpRows.map(c => { const cat = cats.find(x => x.id === c.categoryId);
-          return <button className="row" key={c.name} data-testid="cp-row" onClick={() => c.name !== '_none' && setPick(c)}>
+          return <button className="row" key={c.name} data-testid="cp-row" data-counterparty={c.name} onClick={e => {if(c.name!=='_none'){e.currentTarget.focus({preventScroll:true});setPick(c);}}}>
             <div className="grow"><div className="ell">{c.display}</div><div className="sub">{c.count} {plural(c.count)} · {cat ? cat.name : <span className="chip warn">выбрать категорию</span>}</div><div className="bar"><i style={{ width: `${total ? (c.sum / total) * 100 : 0}%` }} /></div></div>
             <span className="amt">{fmt(c.sum)}</span></button>; })}</div>
       </>}
     </>}
     {pick && <PickCategory cp={pick} dir={dir} cats={cats} onClose={() => setPick(null)} />}
-  </>;
+  </div>;
 }
 const plural = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? 'операция' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'операции' : 'операций');
 
 function PickCategory({ cp, dir, cats, onClose }: { cp: { name: string; display: string; categoryId: string | null }; dir: 'in' | 'out'; cats: Cat[]; onClose: () => void }) {
-  const [err, setErr] = useState('');
+  const [err, setErr] = useState(''),[busy,setBusy]=useState(false);const saving=useRef(false);
   async function choose(id: string | null) {
+    if(saving.current)return;saving.current=true;setBusy(true);setErr('');
     try {
       const list = (await api('GET', '/api/counterparties')).counterparties as Array<{ id: string; name_norm: string }>;
       const row = list.find(x => x.name_norm === cp.name); if (!row) throw new Error('Контрагент не найден');
       await api('PUT', `/api/counterparties/${row.id}`, dir === 'in' ? { categoryInId: id } : { categoryOutId: id }); bump(); onClose();
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr((e as Error).message); }finally{saving.current=false;setBusy(false);}
   }
-  return <Sheet title={`Куда отнести «${cp.display}»?`} onClose={onClose}>
-    <div className="group">{cats.filter(c => c.type === (dir === 'in' ? 'income' : 'expense')).map(c => <button className="row" key={c.id} onClick={() => choose(c.id)}><span className="dot" style={{ background: c.color }} /><span className="grow">{c.name}</span>{cp.categoryId === c.id && '✓'}</button>)}</div>
-    {cp.categoryId && <button className="btn sec" style={{ marginTop: 12 }} onClick={() => choose(null)}>Снять привязку</button>}
-    {err && <div className="err">{err}</div>}
+  return <Sheet title={`Куда отнести «${cp.display}»?`} onClose={()=>{if(!saving.current)onClose();}}>
+    <div className="group" aria-busy={busy}>{cats.filter(c => c.type === (dir === 'in' ? 'income' : 'expense')).map(c => <button className="row" disabled={busy} key={c.id} onClick={() => choose(c.id)}><span className="dot" style={{ background: c.color }} /><span className="grow">{c.name}</span>{cp.categoryId === c.id && '✓'}</button>)}</div>
+    {cp.categoryId && <button className="btn sec" disabled={busy} style={{ marginTop: 12 }} onClick={() => choose(null)}>Снять привязку</button>}
+    {busy&&<p role="status">Сохраняем категорию…</p>}
+    {err && <div className="err" role="alert">{err}</div>}
   </Sheet>;
 }
 
