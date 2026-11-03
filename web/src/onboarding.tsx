@@ -23,16 +23,17 @@ export function FinancialQuestionnaire({record,onDone}:{record:FinancialProfileR
     return {...p,expenseCategoryIds:p.expenseCategoryIds.filter(id=>cats.some(c=>c.id===id&&c.type==='expense')),incomes:p.incomes.map(i=>({...i,categoryId:cats.some(c=>c.id===i.categoryId&&c.type==='income')?i.categoryId:''}))};
   });
   const [version,setVersion]=useState(record.version),[step,setStep]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  const saving=useRef(false);
   const [creatingCategory,setCreatingCategory]=useState(false);
   const heading=useRef<HTMLHeadingElement>(null),form=useRef<HTMLFormElement>(null);
   useEffect(()=>{heading.current?.focus({preventScroll:true});window.scrollTo(0,0);},[step]);
   const patch=(p:Partial<FinancialProfile>)=>setProfile(x=>({...x,...p}));
   async function save(status:'draft'|'complete'|'deferred'){
-    if(!form.current?.reportValidity())return;
+    if(saving.current||!form.current?.reportValidity())return;saving.current=true;
     setBusy(true);setError('');
     try{const saved=await api<FinancialProfileRecord>('PUT','/api/financial-profile',{version,status,profile});setVersion(saved.version);setState({financialProfile:saved,...(status==='draft'?{}:{onboardingRequired:false})});
       if(status==='draft')setStep(s=>s+1);else onDone();
-    }catch(e){setError((e as Error).message);}finally{setBusy(false);}
+    }catch(e){setError((e as Error).message);}finally{saving.current=false;setBusy(false);}
   }
   const expense=cats.filter(c=>c.type==='expense'),income=cats.filter(c=>c.type==='income');
   return <div className="questionnaire">

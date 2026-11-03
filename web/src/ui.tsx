@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { lockScroll } from './scroll-lock';
 import { api } from './api';
 import type { FinancialProfileRecord } from '../../shared/financial-profile';
@@ -31,14 +31,32 @@ export function applyTheme(t: string) {
 }
 export const savedTheme = () => { try { return localStorage.getItem('theme') ?? 'system'; } catch { return 'system'; } };
 
-export function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+/** A synchronous guard also covers two clicks in the same render/event. */
+export function useAction(){
+  const running=useRef(false),active=useRef(true);
+  const [busy,setBusy]=useState(false),[error,setError]=useState('');
+  useEffect(()=>{active.current=true;return()=>{active.current=false;};},[]);
+  async function run(work:()=>Promise<unknown>){
+    if(running.current)return false;
+    running.current=true;setBusy(true);setError('');
+    try{await work();return true;}
+    catch(e){if(active.current)setError(e instanceof Error?e.message:'Не удалось выполнить действие');return false;}
+    finally{running.current=false;if(active.current)setBusy(false);}
+  }
+  return {busy,error,setError,run,running};
+}
+const sheetStack:HTMLElement[]=[];
+
+export function Sheet({ title, onClose, children, busy=false }: { title: string; onClose: () => void; children: ReactNode; busy?:boolean }) {
   const restore=useRef(document.activeElement as HTMLElement|null);
-  const ref=useRef<HTMLElement>(null), close=useRef(onClose); close.current=onClose;
+  const [layer,setLayer]=useState(0);
+  const ref=useRef<HTMLElement>(null), close=useRef(onClose); close.current=()=>{if(!busy)onClose();};
   useEffect(()=>{
-    const previous=restore.current, unlock=lockScroll();
+    const previous=restore.current, unlock=lockScroll(),element=ref.current!;setLayer(sheetStack.length);sheetStack.push(element);
     const focus=()=>Array.from(ref.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),a[href],[tabindex="0"]')??[]).filter(el=>el.getClientRects().length);
-    const frame=requestAnimationFrame(()=>{if(!ref.current?.contains(document.activeElement))(ref.current?.querySelector<HTMLElement>('[data-autofocus]')??focus()[0]??ref.current)?.focus({preventScroll:true});});
+    const frame=requestAnimationFrame(()=>{if(sheetStack.at(-1)===element&&!ref.current?.contains(document.activeElement))(ref.current?.querySelector<HTMLElement>('[data-autofocus]')??focus()[0]??ref.current)?.focus({preventScroll:true});});
     const key=(e:KeyboardEvent)=>{
+      if(sheetStack.at(-1)!==element)return;
       if(e.key==='Escape'){e.preventDefault();close.current();}
       if(e.key==='Tab') { const items=focus(), first=items[0], last=items[items.length-1];
         if(!first){e.preventDefault();ref.current?.focus();}
@@ -47,9 +65,9 @@ export function Sheet({ title, onClose, children }: { title: string; onClose: ()
       }
     };
     window.addEventListener('keydown',key);
-    return ()=>{cancelAnimationFrame(frame);unlock();window.removeEventListener('keydown',key);requestAnimationFrame(()=>{if(previous?.isConnected)previous.focus({preventScroll:true});});};
+    return ()=>{cancelAnimationFrame(frame);sheetStack.splice(sheetStack.indexOf(element),1);unlock();window.removeEventListener('keydown',key);requestAnimationFrame(()=>{if(previous?.isConnected&&(!sheetStack.length||sheetStack.at(-1)?.contains(previous)))previous.focus({preventScroll:true});});};
   },[]);
-  return <><div className="sheet-bg" onClick={onClose} aria-hidden="true" /><section ref={ref} tabIndex={-1} className="sheet" role="dialog" aria-modal="true" aria-label={title}><div className="sheet-handle" aria-hidden="true"/><header className="sheet-heading"><h3>{title}</h3><button className="close-sheet" aria-label="Закрыть" onClick={onClose}>×</button></header>{children}</section></>;
+  return <><div className="sheet-bg" style={{zIndex:20+layer*2}} onClick={()=>close.current()} aria-hidden="true" /><section ref={ref} tabIndex={-1} className="sheet" style={{zIndex:21+layer*2}} aria-busy={busy||undefined} role="dialog" aria-modal="true" aria-label={title}><div className="sheet-handle" aria-hidden="true"/><header className="sheet-heading"><h3>{title}</h3><button className="close-sheet" aria-label="Закрыть" disabled={busy} onClick={()=>close.current()}>×</button></header>{children}</section></>;
 }
 
 export const Field = ({ label, children }: { label: string; children: ReactNode }) => <div className="field"><label>{label}</label>{children}</div>;

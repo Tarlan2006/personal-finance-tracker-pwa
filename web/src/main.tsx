@@ -16,7 +16,7 @@ const TABS = [['feed', 'Лента', Icons.feed], ['reports', 'Отчёты', Ic
 
 function App() {
   const { login, ready, financialProfile, onboardingRequired } = useAppState(); const [tab, setTab] = useState<(typeof TABS)[number][0]>('feed');
-  const [adding,setAdding] = useState(false); const [toast,setToast] = useState('');
+  const [adding,setAdding] = useState(false);const [addBusy,setAddBusy]=useState(false); const [toast,setToast] = useState('');
   const [startupError,setStartupError]=useState(''),[slowStartup,setSlowStartup]=useState(false);
   useEffect(() => {
     let active=true;const timer=setTimeout(()=>{if(active)setSlowStartup(true);},12000);
@@ -38,7 +38,7 @@ function App() {
     <main className="app" aria-hidden={adding || undefined}>{tab === 'feed' ? <Feed onImport={()=>setTab('import')} /> : tab === 'reports' ? <Reports /> : tab === 'import' ? <Import onImported={imported} onViewFeed={viewFeed} /> : <More onImported={imported} onViewFeed={viewFeed} />}</main>
     <button className="fab" aria-label="Добавить операцию" title="Добавить операцию" disabled={adding} aria-hidden={adding || undefined} onClick={e=>{e.currentTarget.focus();setAdding(true);}}>{Icons.plus}</button>
     <nav className="tabbar" aria-label="Разделы" aria-hidden={adding || undefined}><div>{TABS.map(([k,l,ic])=><button key={k} className={'tab'+(tab===k?' on':'')} aria-current={tab===k?'page':undefined} onClick={()=>setTab(k)}>{ic}<span>{l}</span></button>)}</div></nav>
-    {adding && <Sheet title="Добавить" onClose={()=>setAdding(false)}><Add onDone={()=>{setAdding(false);setTab('feed');setToast('Операция сохранена');}} /></Sheet>}
+    {adding && <Sheet title="Добавить" busy={addBusy} onClose={()=>setAdding(false)}><Add onBusyChange={setAddBusy} onDone={()=>{setAdding(false);setTab('feed');setToast('Операция сохранена');}} /></Sheet>}
     {toast && <div className="island-toast" role="status">{Icons.check}<span>{toast}</span></div>}
   </>;
 }

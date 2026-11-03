@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalS
 import {shiftDocumentScroll} from './scroll-lock';
 import { api, ApiError, pauseRemainingSec } from './api';
 import { getQueueStatus, subscribeQueue, listQueue, retryFailed, flush } from './queue';
-import { applyTheme, bump, Field, fmt, getState, setState, loadCats, monthLabel, savedTheme, shiftMonth, Sheet, thisMonth, useAppState, type Cat } from './ui';
+import { applyTheme, bump, Field, fmt, getState, setState, loadCats, monthLabel, savedTheme, shiftMonth, Sheet, thisMonth, useAppState, useAction, type Cat } from './ui';
 import { doLogout } from './screens1';
 import { FinancialProfileScreen } from './onboarding';
 
@@ -91,7 +91,7 @@ function PickCategory({ cp, dir, cats, onClose }: { cp: { name: string; display:
       await api('PUT', `/api/counterparties/${row.id}`, dir === 'in' ? { categoryInId: id } : { categoryOutId: id }); bump(); onClose();
     } catch (e) { setErr((e as Error).message); }finally{saving.current=false;setBusy(false);}
   }
-  return <Sheet title={`Куда отнести «${cp.display}»?`} onClose={()=>{if(!saving.current)onClose();}}>
+  return <Sheet busy={busy} title={`Куда отнести «${cp.display}»?`} onClose={()=>{if(!saving.current)onClose();}}>
     <div className="group" aria-busy={busy}>{cats.filter(c => c.type === (dir === 'in' ? 'income' : 'expense')).map(c => <button className="row" disabled={busy} key={c.id} onClick={() => choose(c.id)}><span className="dot" style={{ background: c.color }} /><span className="grow">{c.name}</span>{cp.categoryId === c.id && '✓'}</button>)}</div>
     {cp.categoryId && <button className="btn sec" disabled={busy} style={{ marginTop: 12 }} onClick={() => choose(null)}>Снять привязку</button>}
     {busy&&<p role="status">Сохраняем категорию…</p>}
@@ -102,6 +102,7 @@ function PickCategory({ cp, dir, cats, onClose }: { cp: { name: string; display:
 // ---------- Ещё ----------
 type Sub = null | 'cats' | 'keys' | 'devices' | 'import' | 'sync' | 'password' | 'theme' | 'profile' | 'history';
 export function More({ onImported, onViewFeed }: { onImported?: (n:number)=>void; onViewFeed?:()=>void } = {}) {
+  const logout=useAction();
   const { name, login } = useAppState(); const [sub, setSub] = useState<Sub>(null); const [lerr, setLerr] = useState('');
   if (sub) return <><button className="back" onClick={() => setSub(null)}>‹ Ещё</button>{{ history:<><h1>История и очистка</h1><HistoryPanel/></>, profile:<FinancialProfileScreen/>, cats: <Categories />, keys: <Keys />, devices: <Devices />, import: <Import onImported={onImported} onViewFeed={onViewFeed} />, sync: <Sync />, password: <Password />, theme: <Theme /> }[sub]}</>;
   const item = (s: Sub, label: string, hint?: string) => <button className="row" onClick={() => setSub(s)}><span className="grow">{label}</span><span className="sub">{hint}</span><span className="sub">›</span></button>;
@@ -114,7 +115,7 @@ export function More({ onImported, onViewFeed }: { onImported?: (n:number)=>void
     <h2>Интеграции</h2><div className="group">{item('keys', 'Быстрые команды (ключи)')}</div>
     <h2>Приложение</h2><div className="group">{item('sync', 'Синхронизация')}{item('theme', 'Тема')}</div>
     <h2>Безопасность</h2><div className="group">{item('devices', 'Устройства')}{item('password', 'Сменить пароль')}</div>
-    <div style={{ marginTop: 24 }}>{lerr && <div className="err" role="alert">{lerr}</div>}<button className="btn danger" onClick={async () => setLerr((await doLogout()) ?? '')}>Выйти</button></div>
+    <div style={{ marginTop: 24 }}>{lerr && <div className="err" role="alert">{lerr}</div>}<button className="btn danger" disabled={logout.busy} onClick={()=>logout.run(async()=>setLerr((await doLogout())??''))}>Выйти</button></div>
   </>;
 }
 
@@ -125,81 +126,89 @@ function Theme() {
 
 function Categories() {
   const { cats } = useAppState(); const [type, setType] = useState<'expense' | 'income'>('expense'); const [edit, setEdit] = useState<Cat | 'new' | null>(null);
-  const [rules, setRules] = useState<any[]>([]);
+  const [rules, setRules] = useState<any[]>([]); const action=useAction();
   const loadRules = () => api('GET', '/api/rules').then(r => setRules(r.rules));
-  useEffect(() => { loadRules(); }, []);
+  useEffect(() => { void action.run(loadRules); }, []);
   return <>
     <h1>Категории</h1>
+    {action.error&&<div className="err" role="alert">{action.error}<button className="btn small sec" disabled={action.busy} onClick={()=>action.run(loadRules)}>Повторить загрузку правил</button></div>}
     <div className="seg"><button className={type === 'expense' ? 'on' : ''} onClick={() => setType('expense')}>Расходы</button><button className={type === 'income' ? 'on' : ''} onClick={() => setType('income')}>Доходы</button></div>
     <div className="group">{cats.filter(c => c.type === type).map(c => <button className="row" key={c.id} onClick={() => setEdit(c)}><span className="dot" style={{ background: c.color }} /><span className="grow">{c.name}</span><span className="sub">›</span></button>)}</div>
     <button className="btn sec" style={{ marginTop: 12 }} onClick={() => setEdit('new')}>Добавить категорию</button>
     <h2>Правила по тексту</h2>
-    <div className="group">{rules.map(r => <div className="row" key={r.id}><div className="grow"><div>«{r.pattern}»</div><div className="sub">{r.direction === 'in' ? 'доход' : r.direction === 'out' ? 'расход' : 'любое'} → {cats.find(c => c.id === r.categoryId)?.name ?? '—'}</div></div><button className="btn small danger" onClick={async () => { await api('DELETE', `/api/rules/${r.id}`); loadRules(); bump(); }}>Удалить</button></div>)}{!rules.length && <div className="row muted">Правил нет. Правило «ТОО Ромашка → Зарплата» сразу разнесёт все такие поступления.</div>}</div>
-    <RuleForm cats={cats} onAdded={() => { loadRules(); bump(); }} />
+    <div className="group">{rules.map(r => <div className="row" key={r.id}><div className="grow"><div>«{r.pattern}»</div><div className="sub">{r.direction === 'in' ? 'доход' : r.direction === 'out' ? 'расход' : 'любое'} → {cats.find(c => c.id === r.categoryId)?.name ?? '—'}</div></div><button className="btn small danger" disabled={action.busy} onClick={()=>action.run(async()=>{await api('DELETE', `/api/rules/${r.id}`);await loadRules();bump();})}>Удалить</button></div>)}{!rules.length && <div className="row muted">Правил нет. Правило «ТОО Ромашка → Зарплата» сразу разнесёт все такие поступления.</div>}</div>
+    <RuleForm cats={cats} onAdded={async () => { await loadRules(); bump(); }} />
     {edit && <CatSheet cat={edit === 'new' ? null : edit} type={type} onClose={() => setEdit(null)} />}
   </>;
 }
-function RuleForm({ cats, onAdded }: { cats: Cat[]; onAdded: () => void }) {
-  const [pattern, setPattern] = useState(''); const [dir, setDir] = useState<'in' | 'out' | 'any'>('in'); const [cat, setCat] = useState(''); const [err, setErr] = useState('');
+function RuleForm({ cats, onAdded }: { cats: Cat[]; onAdded: () => Promise<void> }) {
+  const action=useAction();
+  const [pattern, setPattern] = useState(''); const [dir, setDir] = useState<'in' | 'out' | 'any'>('in'); const [cat, setCat] = useState('');
   const opts = cats.filter(c => dir === 'any' || c.type === (dir === 'in' ? 'income' : 'expense'));
   return <div style={{ marginTop: 12 }}>
-    <Field label="Новое правило: если в тексте есть…"><input aria-label="Шаблон правила" value={pattern} onChange={e => setPattern(e.target.value)} placeholder="например: зарплата" /></Field>
-    <div style={{ display: 'flex', gap: 8 }}><select aria-label="Направление правила" value={dir} onChange={e => { setDir(e.target.value as any); setCat(''); }}><option value="in">доход</option><option value="out">расход</option><option value="any">любое</option></select>
-      <select aria-label="Категория правила" value={cat} onChange={e => setCat(e.target.value)}><option value="">Категория…</option>{opts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-    {err && <div className="err">{err}</div>}
-    <button className="btn sec" style={{ marginTop: 8 }} disabled={!pattern || !cat} onClick={async () => { try { await api('POST', '/api/rules', { pattern, direction: dir, categoryId: cat }); setPattern(''); setErr(''); onAdded(); } catch (e) { setErr((e as Error).message); } }}>Добавить правило</button>
+    <Field label="Новое правило: если в тексте есть…"><input disabled={action.busy} aria-label="Шаблон правила" value={pattern} onChange={e => setPattern(e.target.value)} placeholder="например: зарплата" /></Field>
+    <div style={{ display: 'flex', gap: 8 }}><select disabled={action.busy} aria-label="Направление правила" value={dir} onChange={e => { setDir(e.target.value as any); setCat(''); }}><option value="in">доход</option><option value="out">расход</option><option value="any">любое</option></select>
+      <select disabled={action.busy} aria-label="Категория правила" value={cat} onChange={e => setCat(e.target.value)}><option value="">Категория…</option>{opts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+    {action.error && <div className="err" role="alert">{action.error}</div>}
+    <button className="btn sec" style={{ marginTop: 8 }} disabled={action.busy||!pattern.trim()||!cat} onClick={()=>action.run(async()=>{await api('POST','/api/rules',{pattern,direction:dir,categoryId:cat});setPattern('');await onAdded();})}>Добавить правило</button>
   </div>;
 }
 const COLORS = ['#34c759', '#ff9f0a', '#0a84ff', '#5e5ce6', '#ff453a', '#bf5af2', '#64d2ff', '#ffd60a', '#ff375f', '#8e8e93'];
 function CatSheet({ cat, type, onClose }: { cat: Cat | null; type: 'expense' | 'income'; onClose: () => void }) {
-  const [name, setName] = useState(cat?.name ?? ''); const [color, setColor] = useState(cat?.color ?? COLORS[2]); const [err, setErr] = useState('');
-  async function save() { try { if (cat) await api('PATCH', `/api/categories/${cat.id}`, { name, color }); else await api('POST', '/api/categories', { name, type, color }); await loadCats(); bump(); onClose(); } catch (e) { setErr((e as Error).message); } }
-  async function remove() { if (!confirm('Удалить категорию? Записи останутся, но станут «без категории».')) return; try { await api('DELETE', `/api/categories/${cat!.id}`); await loadCats(); bump(); onClose(); } catch (e) { setErr((e as Error).message); } }
-  return <Sheet title={cat ? 'Категория' : 'Новая категория'} onClose={onClose}>
-    <Field label="Название"><input aria-label="Название категории" value={name} onChange={e => setName(e.target.value)} /></Field>
-    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '4px 0 16px' }}>{COLORS.map(c => <button key={c} aria-label={'Цвет ' + c} onClick={() => setColor(c)} style={{ width: 32, height: 32, borderRadius: 16, background: c, border: color === c ? '3px solid var(--fg)' : '3px solid transparent', cursor: 'pointer' }} />)}</div>
-    {err && <div className="err" role="alert">{err}</div>}
-    <button className="btn" disabled={!name.trim()} onClick={save}>Сохранить</button>
-    {cat && <button className="btn danger" style={{ marginTop: 8 }} onClick={remove}>Удалить</button>}
+  const action=useAction();
+  const [name, setName] = useState(cat?.name ?? ''); const [color, setColor] = useState(cat?.color ?? COLORS[2]);
+  const save=()=>action.run(async()=>{if(cat)await api('PATCH',`/api/categories/${cat.id}`,{name,color});else await api('POST','/api/categories',{name,type,color});await loadCats();bump();onClose();});
+  function remove(){if(confirm('Удалить категорию? Записи останутся, но станут «без категории».'))void action.run(async()=>{await api('DELETE',`/api/categories/${cat!.id}`);await loadCats();bump();onClose();});}
+  return <Sheet title={cat ? 'Категория' : 'Новая категория'} onClose={onClose} busy={action.busy}>
+    <Field label="Название"><input disabled={action.busy} aria-label="Название категории" value={name} onChange={e => setName(e.target.value)} /></Field>
+    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '4px 0 16px' }}>{COLORS.map(c => <button key={c} aria-label={'Цвет ' + c} aria-pressed={color===c} disabled={action.busy} onClick={() => setColor(c)} style={{ width: 44, height: 44, borderRadius: 22, background: c, border: color === c ? '3px solid var(--fg)' : '3px solid transparent', cursor: 'pointer' }} />)}</div>
+    {action.error && <div className="err" role="alert">{action.error}</div>}
+    <button className="btn" disabled={action.busy||!name.trim()} onClick={save}>Сохранить</button>
+    {cat && <button className="btn danger" style={{ marginTop: 8 }} disabled={action.busy} onClick={remove}>Удалить</button>}
   </Sheet>;
 }
 
 function Keys() {
-  const [keys, setKeys] = useState<any[]>([]); const [label, setLabel] = useState(''); const [scope, setScope] = useState<'write' | 'read'>('write'); const [fresh, setFresh] = useState<{ key: string; label: string } | null>(null); const [err, setErr] = useState('');
-  const load = () => api('GET', '/api/keys').then(r => setKeys(r.keys)).catch(e => setErr(e.message)); useEffect(() => { load(); }, []);
-  async function create() { try { const r = await api('POST', '/api/keys', { label, scope }); setFresh({ key: r.key, label: r.label }); setLabel(''); load(); } catch (e) { setErr((e as Error).message); } }
+  const action=useAction(),copy=useAction();const [copyMessage,setCopyMessage]=useState('');
+  const [keys, setKeys] = useState<any[]>([]); const [label, setLabel] = useState(''); const [scope, setScope] = useState<'write' | 'read'>('write'); const [fresh, setFresh] = useState<{ key: string; label: string } | null>(null);
+  const load=async()=>{const r=await api('GET','/api/keys');setKeys(r.keys);};useEffect(()=>{void action.run(load);},[]);
+  const create=()=>action.run(async()=>{const r=await api('POST','/api/keys',{label,scope});setFresh({key:r.key,label:r.label});setCopyMessage('');copy.setError('');setLabel('');await load();});
+  const copyKey=()=>copy.run(async()=>{setCopyMessage('');try{if(!navigator.clipboard?.writeText)throw new Error();await navigator.clipboard.writeText(fresh!.key);}catch{throw new Error('Не удалось скопировать. Выделите ключ и скопируйте вручную.');}setCopyMessage('Скопировано');});
   return <>
     <h1>Быстрые команды</h1>
     <p className="muted">Ключ вставляется в приложение «Команды». «Запись» умеет только добавлять записи, «Чтение» — только получать сводку. Ключ показывается один раз.</p>
     <div className="group">{keys.filter(k => !k.revoked_at).map(k => <div className="row" key={k.id}><div className="grow"><div>{k.label} <span className="chip">{k.scope === 'write' ? 'запись' : 'чтение'}</span></div><div className="sub">{k.prefix}… · {k.last_used_at ? 'использован ' + new Date(k.last_used_at).toLocaleString('ru-RU') : 'не использовался'}</div></div>
-      <button className="btn small danger" onClick={async () => { await api('DELETE', `/api/keys/${k.id}`); load(); }}>Отозвать</button></div>)}{!keys.some(k => !k.revoked_at) && <div className="row muted">Ключей пока нет</div>}</div>
+      <button className="btn small danger" disabled={action.busy} onClick={()=>action.run(async()=>{await api('DELETE',`/api/keys/${k.id}`);await load();})}>Отозвать</button></div>)}{!keys.some(k => !k.revoked_at) && <div className="row muted">Ключей пока нет</div>}</div>
     <h2>Новый ключ</h2>
-    <Field label="Метка"><input aria-label="Метка ключа" value={label} onChange={e => setLabel(e.target.value)} placeholder="Например: iPhone, кнопка действия" /></Field>
-    <div className="seg"><button className={scope === 'write' ? 'on' : ''} onClick={() => setScope('write')}>Запись</button><button className={scope === 'read' ? 'on' : ''} onClick={() => setScope('read')}>Чтение</button></div>
-    {err && <div className="err" role="alert">{err}</div>}
-    <button className="btn" disabled={!label.trim()} onClick={create}>Создать ключ</button>
-    {fresh && <Sheet title={`Ключ «${fresh.label}»`} onClose={() => setFresh(null)}><p className="muted">Скопируйте сейчас — позже его не показать.</p><div className="group" style={{ padding: 14 }}><div className="mono" data-testid="new-key">{fresh.key}</div></div>
-      <button className="btn" style={{ marginTop: 12 }} onClick={() => navigator.clipboard?.writeText(fresh.key).catch(() => {})}>Скопировать</button></Sheet>}
+    <Field label="Метка"><input disabled={action.busy} aria-label="Метка ключа" value={label} onChange={e => setLabel(e.target.value)} placeholder="Например: iPhone, кнопка действия" /></Field>
+    <div className="seg"><button disabled={action.busy} className={scope === 'write' ? 'on' : ''} onClick={() => setScope('write')}>Запись</button><button disabled={action.busy} className={scope === 'read' ? 'on' : ''} onClick={() => setScope('read')}>Чтение</button></div>
+    {action.error && <div className="err" role="alert">{action.error}<button className="btn small sec" disabled={action.busy} onClick={()=>action.run(load)}>Обновить ключи</button></div>}
+    <button className="btn" disabled={action.busy||!label.trim()} onClick={create}>Создать ключ</button>
+    {fresh && <Sheet title={`Ключ «${fresh.label}»`} onClose={() => setFresh(null)} busy={action.busy||copy.busy}><p className="muted">Скопируйте сейчас — позже его не показать.</p><div className="group" style={{ padding: 14 }}><div className="mono" data-testid="new-key">{fresh.key}</div></div>
+      <button className="btn" style={{ marginTop: 12 }} disabled={copy.busy} onClick={copyKey}>Скопировать</button>{copy.error&&<div className="err" role="alert">{copy.error}</div>}{copyMessage&&<p role="status">{copyMessage}</p>}</Sheet>}
   </>;
 }
 
 function Devices() {
-  const [d, setD] = useState<{ devices: any[]; current: string } | null>(null); const [err, setErr] = useState('');
-  const load = () => api('GET', '/api/devices').then(setD).catch(e => setErr(e.message)); useEffect(() => { load(); }, []);
-  return <><h1>Устройства</h1>{err && <div className="err">{err}</div>}<div className="group">{d?.devices.map(x => <div className="row" key={x.id}><div className="grow"><div>{x.device_label}{x.id === d.current && <span className="chip" style={{ marginLeft: 8 }}>это устройство</span>}</div><div className="sub">активен {new Date(x.last_seen_at).toLocaleString('ru-RU')}</div></div>
-    {x.id !== d.current && <button className="btn small danger" onClick={async () => { await api('DELETE', `/api/devices/${x.id}`); load(); }}>Отозвать</button>}</div>)}</div></>;
+  const action=useAction();
+  const [d, setD] = useState<{ devices: any[]; current: string } | null>(null);
+  const load=()=>api('GET','/api/devices').then(setD);useEffect(()=>{void action.run(load);},[]);
+  return <><h1>Устройства</h1>{action.error&&<div className="err" role="alert">{action.error}<button className="btn small sec" disabled={action.busy} onClick={()=>action.run(load)}>Обновить устройства</button></div>}<div className="group">{d?.devices.map(x => <div className="row" key={x.id}><div className="grow"><div>{x.device_label}{x.id === d.current && <span className="chip" style={{ marginLeft: 8 }}>это устройство</span>}</div><div className="sub">активен {new Date(x.last_seen_at).toLocaleString('ru-RU')}</div></div>
+    {x.id !== d.current && <button className="btn small danger" disabled={action.busy} onClick={()=>action.run(async()=>{await api('DELETE',`/api/devices/${x.id}`);await load();})}>Отозвать</button>}</div>)}</div></>;
 }
 
 function Password() {
-  const [cur, setCur] = useState(''); const [nw, setNw] = useState(''); const [msg, setMsg] = useState(''); const [err, setErr] = useState('');
+  const action=useAction();
+  const [cur, setCur] = useState(''); const [nw, setNw] = useState(''); const [msg, setMsg] = useState('');
   return <><h1>Пароль</h1>
-    <Field label="Текущий пароль"><input aria-label="Текущий пароль" type="password" autoComplete="current-password" value={cur} onChange={e => setCur(e.target.value)} /></Field>
-    <Field label="Новый пароль (от 10 символов)"><input aria-label="Новый пароль" type="password" autoComplete="new-password" value={nw} onChange={e => setNw(e.target.value)} /></Field>
-    {err && <div className="err" role="alert">{err}</div>}{msg && <div className="ok" role="status">{msg}</div>}
-    <button className="btn" disabled={!cur || nw.length < 10} onClick={async () => { setErr(''); setMsg(''); try { await api('POST', '/api/auth/password', { current: cur, next: nw }); setMsg('Пароль изменён, другие устройства вышли'); setCur(''); setNw(''); } catch (e) { setErr((e as Error).message); } }}>Сменить пароль</button></>;
+    <Field label="Текущий пароль"><input disabled={action.busy} aria-label="Текущий пароль" type="password" autoComplete="current-password" value={cur} onChange={e => setCur(e.target.value)} /></Field>
+    <Field label="Новый пароль (от 10 символов)"><input disabled={action.busy} aria-label="Новый пароль" type="password" autoComplete="new-password" value={nw} onChange={e => setNw(e.target.value)} /></Field>
+    {action.error&&<div className="err" role="alert">{action.error}</div>}{msg && <div className="ok" role="status">{msg}</div>}
+    <button className="btn" disabled={action.busy||!cur||nw.length<10} onClick={()=>action.run(async()=>{setMsg('');await api('POST','/api/auth/password',{current:cur,next:nw});setMsg('Пароль изменён, другие устройства вышли');setCur('');setNw('');})}>Сменить пароль</button></>;
 }
 
 function Sync() {
+  const action=useAction();
   const st = useSyncExternalStore(subscribeQueue, getQueueStatus); const { login } = useAppState(); const [items, setItems] = useState<any[]>([]);
   useEffect(() => { let active=true;if (login) listQueue(login).then(r=>{if(active)setItems(r);}).catch(()=>{if(active)setItems([]);});return ()=>{active=false;}; }, [login, st.count, st.failed]);
   const fmtT = (t: number | null) => (t ? new Date(t).toLocaleTimeString('ru-RU') : '—');
@@ -213,7 +222,8 @@ function Sync() {
     {pauseRemainingSec() > 0 && <div className="row"><span className="grow">Пауза сервера</span><b>{pauseRemainingSec()} с</b></div>}
   </div>
   {items.map(i => <div className="banner" key={i.id}>{i.payload.counterparty || 'запись'} — {fmt(i.payload.amountMinor)}: {i.lastError ?? 'ждёт отправки'}</div>)}
-  <button className="btn" style={{ marginTop: 16 }} disabled={!st.count} onClick={() => login && (st.failed ? retryFailed(login) : flush(login))}>Отправить сейчас</button>
+  <button className="btn" style={{ marginTop: 16 }} disabled={action.busy||!st.count||!st.online} onClick={()=>action.run(async()=>{if(login)await(st.failed?retryFailed(login):flush(login));})}>Отправить сейчас</button>
+  {action.error&&<div className="err" role="alert">{action.error}</div>}
   <p className="muted">Фоновой отправки на iPhone нет: очередь уходит при открытии приложения и возвращении сети. Быстрые команды отправляют данные сами.</p></>;
 }
 
@@ -253,7 +263,7 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
   const body = (dryRun: boolean) => ({ accountLogin:getState().login,bank, pdfBase64: file!.pdfBase64, csv: file!.text, filename: file!.name, dryRun, mapping: { delimiter: file!.delim, hasHeader: true, dateCol: m.date, counterpartyCol: m.cp >= 0 ? m.cp : undefined, noteCol: m.note >= 0 ? m.note : undefined,
     ...(m.mode === 'signed' ? { amountCol: m.amount } : m.mode === 'split' ? { debitCol: m.debit >= 0 ? m.debit : undefined, creditCol: m.credit >= 0 ? m.credit : undefined } : { amountCol: m.amount, directionCol: m.dirCol, inValues: m.inV.split(',').map(s => s.trim()).filter(Boolean), outValues: m.outV.split(',').map(s => s.trim()).filter(Boolean) }) } });
   async function run(dry: boolean) { if(importing.current)return;importing.current=true;setState({activeImports:getState().activeImports+1});setConfirmImport(false);setBusy(true); setErr(''); try { const r = await api('POST', '/api/import', body(dry)); setRep({...r,mappingSnapshot:JSON.stringify(m)}); if (!dry) { bump(); onImported?.(r.imported); } } catch (e) { setErr((e as ApiError).message); } finally { importing.current=false;setState({activeImports:Math.max(0,getState().activeImports-1)});setBusy(false); } }
-  const sel = (label: string, key: 'date' | 'amount' | 'cp' | 'note' | 'debit' | 'credit' | 'dirCol', optional = false) => <Field label={label}><select aria-label={label} value={m[key]} onChange={e => setM({ ...m, [key]: Number(e.target.value) })}>{optional && <option value={-1}>— нет —</option>}{file!.header.map((h, i) => <option key={i} value={i}>{h || `Колонка ${i + 1}`}</option>)}</select></Field>;
+  const sel = (label: string, key: 'date' | 'amount' | 'cp' | 'note' | 'debit' | 'credit' | 'dirCol', optional = false) => <Field label={label}><select disabled={busy} aria-label={label} value={m[key]} onChange={e => setM({ ...m, [key]: Number(e.target.value) })}>{optional && <option value={-1}>— нет —</option>}{file!.header.map((h, i) => <option key={i} value={i}>{h || `Колонка ${i + 1}`}</option>)}</select></Field>;
   return <>
     <div className="screen-kicker">ИМПОРТ ОПЕРАЦИЙ</div><h1>Выписка</h1><div className="import-hero" aria-hidden="true">↥</div>
     <p className="muted">Каждая строка файла попадёт в отчёт: добавлена, распознана как повтор, отклонена с причиной или учтена как служебный текст. Halyk, Kaspi и Freedom: PDF с текстовым слоем. Для других файлов — универсальный CSV. За один раз — до 1000 строк (у Freedom многострочная операция считается одной строкой). Большую выписку разделите по датам, не разбивая операции одного дня.</p>
@@ -273,9 +283,9 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
     {file && <>
       <p className="sub" data-testid="selected-statement" style={{overflowWrap:'anywhere'}}>Выбран файл: {file.name}</p>
       {bank === 'generic' && <><h2>Колонки</h2>{sel('Дата', 'date')}
-      <div className="seg"><button className={m.mode === 'signed' ? 'on' : ''} onClick={() => setM({ ...m, mode: 'signed' })}>Сумма со знаком</button><button className={m.mode === 'split' ? 'on' : ''} onClick={() => setM({ ...m, mode: 'split' })}>Две колонки</button><button className={m.mode === 'dir' ? 'on' : ''} onClick={() => setM({ ...m, mode: 'dir' })}>Колонка типа</button></div>
+      <div className="seg"><button disabled={busy} className={m.mode === 'signed' ? 'on' : ''} onClick={() => setM({ ...m, mode: 'signed' })}>Сумма со знаком</button><button disabled={busy} className={m.mode === 'split' ? 'on' : ''} onClick={() => setM({ ...m, mode: 'split' })}>Две колонки</button><button disabled={busy} className={m.mode === 'dir' ? 'on' : ''} onClick={() => setM({ ...m, mode: 'dir' })}>Колонка типа</button></div>
       {m.mode === 'split' ? <>{sel('Списание (расход)', 'debit', true)}{sel('Зачисление (доход)', 'credit', true)}</> : sel('Сумма', 'amount')}
-      {m.mode === 'dir' && <>{sel('Колонка типа операции', 'dirCol')}<Field label="Значения дохода (через запятую)"><input aria-label="Значения дохода" value={m.inV} onChange={e => setM({ ...m, inV: e.target.value })} /></Field><Field label="Значения расхода (через запятую)"><input aria-label="Значения расхода" value={m.outV} onChange={e => setM({ ...m, outV: e.target.value })} /></Field></>}
+      {m.mode === 'dir' && <>{sel('Колонка типа операции', 'dirCol')}<Field label="Значения дохода (через запятую)"><input disabled={busy} aria-label="Значения дохода" value={m.inV} onChange={e => setM({ ...m, inV: e.target.value })} /></Field><Field label="Значения расхода (через запятую)"><input disabled={busy} aria-label="Значения расхода" value={m.outV} onChange={e => setM({ ...m, outV: e.target.value })} /></Field></>}
       {sel('Получатель / отправитель', 'cp', true)}{sel('Описание', 'note', true)}</>}
       {err && <div className="err" role="alert">{err}</div>}
       <div style={{ display: 'flex', gap: 8 }}><button className="btn sec" disabled={busy} onClick={() => run(true)}>Проверить</button><button className="btn" disabled={busy} onClick={() => setConfirmImport(true)}>Импортировать</button></div>

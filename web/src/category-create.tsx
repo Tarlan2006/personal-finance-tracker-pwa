@@ -11,7 +11,7 @@ export function CreateCategorySheet({onClose,onCreated}:{onClose:()=>void;onCrea
   try{const category=await api('POST','/api/categories',{name:name.trim(),type:'expense',color});if(!active.current)return;setState({cats:[...getState().cats,category]});bump();onCreated(category.id);onClose();}
   catch(e){saving.current=false;if(active.current){setError((e as Error).message);setBusy(false);}}
  }
- return <Sheet title="Новая категория расходов" onClose={()=>{if(!busy)onClose();}}><form onSubmit={save}>
+ return <Sheet busy={busy} title="Новая категория расходов" onClose={()=>{if(!busy)onClose();}}><form onSubmit={save}>
   <Field label="Название категории"><input data-autofocus aria-label="Название категории" required maxLength={40} value={name} onChange={e=>setName(e.target.value)} placeholder="Например: Образование" disabled={busy}/></Field>
   <Field label="Цвет категории"><input aria-label="Цвет категории" type="color" value={color} onChange={e=>setColor(e.target.value)} disabled={busy}/></Field>
   {error&&<div className="err" role="alert">{error}</div>}

@@ -7,6 +7,8 @@ for(const mode of ['missing','throws','rejects'])test(`Service Worker: ${mode} �
  const deny=`Object.defineProperty(self,'caches',{configurable:true,get(){if('${mode}'==='throws')throw new DOMException('Synthetic storage denial','SecurityError');if('${mode}'==='rejects')return {open:async()=>{throw new Error('Synthetic quota denial');},keys:async()=>{throw new Error('Synthetic storage denial');}};return undefined;}});`;
  await context.route('**/sw.js',route=>route.fulfill({status:200,contentType:'application/javascript',body:deny+'\n'+readFileSync('web/public/sw.js','utf8')}));
  await page.goto('/');
+ // Finish startup before replacing its controller or toggling the network.
+ await expect(page.getByLabel('Логин',{exact:true})).toBeVisible();
  await page.evaluate(async()=>{
   await navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'});await navigator.serviceWorker.ready;
   if(!navigator.serviceWorker.controller)await new Promise<void>(resolve=>navigator.serviceWorker.addEventListener('controllerchange',()=>resolve(),{once:true}));
