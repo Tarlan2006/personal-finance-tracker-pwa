@@ -73,6 +73,11 @@ route('POST', '/api/entries/batch', 'session', async c => {
   }
   return json({ results });
 });
+route('POST', '/api/entries/delete', 'session', async c => {
+  const b = await readJson(c.req, 90 * 1024);
+  requireConfirmation(b, 'DELETE_ENTRIES', c.auth!.accountLogin);
+  return json(await ent.deleteTransactions(c.store, acc(c), b.ids));
+});
 route('PATCH', '/api/entries/:id', 'session', async c => json({ entry: await ent.updateTx(c.store, acc(c), c.params[0], await readJson(c.req)) }));
 route('DELETE', '/api/entries/:id', 'session', async c => { await ent.deleteTx(c.store, acc(c), c.params[0]); return json({ ok: true }); });
 route('GET', '/api/export.csv', 'session', async c =>

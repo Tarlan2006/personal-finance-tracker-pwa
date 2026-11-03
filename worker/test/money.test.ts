@@ -406,3 +406,28 @@ it('история: смена cookie в другой вкладке не мен
  expect((await call(env,'POST','/api/import',{cookie:x,body:{...body,accountLogin:'owner'}})).status).toBe(409);
  for(const cookie of [o,x])expect((await call(env,'GET','/api/history/summary',{cookie})).data).toMatchObject({operations:1,documents:1});
 });
+
+describe('массовое удаление операций',()=>{
+ it('один запрос, изоляция, подтверждение аккаунта и безопасный повтор',async()=>{
+  const {env,o,x}=await setup();
+  const create=async(cookie:string,id:string)=>call(env,'POST','/api/entries',{cookie,body:{id,direction:'out',amountMinor:100,counterparty:'Синтетический магазин'}});
+  await create(o,'bulk-own-0001');await create(o,'bulk-own-0002');await create(x,'bulk-other-001');
+  const body={ids:['bulk-own-0001','bulk-own-0002','bulk-other-001','bulk-missing-01','bulk-own-0001'],confirmation:'DELETE_ENTRIES',accountLogin:'owner'};
+  expect((await call(env,'POST','/api/entries/delete',{body})).status).toBe(401);
+  expect((await call(env,'POST','/api/entries/delete',{cookie:o,body:{...body,confirmation:'wrong'}})).status).toBe(400);
+  expect((await call(env,'POST','/api/entries/delete',{cookie:x,body})).status).toBe(409);
+  const r=await call(env,'POST','/api/entries/delete',{cookie:o,body});expect(r.status).toBe(200);expect(r.data.removed).toBe(2);expect(Number(r.headers.get('x-storage-ops'))).toBeLessThanOrEqual(3);
+  expect((await call(env,'GET','/api/entries',{cookie:o})).data.items).toHaveLength(0);
+  expect((await call(env,'GET','/api/entries',{cookie:x})).data.items).toHaveLength(1);
+  expect((await call(env,'POST','/api/entries/delete',{cookie:o,body})).data.removed).toBe(0);
+ });
+ it('валидация всего списка до записи и атомарный откат при ошибке SQL',async()=>{
+  const {env,o,local}=await setup();
+  for(const id of ['bulk-atomic-01','bulk-atomic-02'])await call(env,'POST','/api/entries',{cookie:o,body:{id,direction:'out',amountMinor:100}});
+  const body={confirmation:'DELETE_ENTRIES',accountLogin:'owner',ids:['bulk-atomic-01','bulk-atomic-02']};
+  for(const ids of [[],null,['bulk-atomic-01',null],['bulk-atomic-01',''],Array(1001).fill('bulk-atomic-01')])expect((await call(env,'POST','/api/entries/delete',{cookie:o,body:{...body,ids}})).status).toBe(400);
+  local.raw.exec("CREATE TRIGGER bulk_delete_failure BEFORE UPDATE OF deleted_at ON entries WHEN NEW.id='bulk-atomic-02' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END");
+  expect((await call(env,'POST','/api/entries/delete',{cookie:o,body})).status).toBe(500);
+  expect((await call(env,'GET','/api/entries',{cookie:o})).data.items).toHaveLength(2);
+ });
+});

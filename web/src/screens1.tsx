@@ -1,5 +1,7 @@
 import { MAX_NOTE_LENGTH } from '../../shared/types';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { shiftDocumentScroll } from './scroll-lock';
+import { EntryCard } from './entry-card';
 import { api, ApiError } from './api';
 import { enqueue, listQueue, removeFromQueue, startQueue, sealQueue, unsealQueue, subscribeQueue, getQueueStatus, type QItem } from './queue';
 import { Field, Sheet, bump, dayLabel, fmt, getState, loadCats, setState, todayStr, useAppState, catMap, Icons, inputMinor, normName, thisMonth, monthLabel, type Cat } from './ui';
@@ -56,33 +58,89 @@ export function Feed({ onImport }: {onImport:()=>void}) {
   const [summary,setSummary]=useState<{in:number;out:number;net:number}|null>(null);
   useEffect(()=>{let active=true;api('GET','/api/reports/summary?month='+thisMonth()).then(r=>{if(active)setSummary(r.totals);}).catch(()=>{});return ()=>{active=false;};},[version,queueStatus.count]);
   const [pending, setPending] = useState<QItem[]>([]); const [err, setErr] = useState(''); const [edit, setEdit] = useState<Entry | null>(null); const [loading, setLoading] = useState(true);
+  const [refreshHeight,setRefreshHeight]=useState<number>();
+  const [selecting,setSelecting]=useState(false),[selected,setSelected]=useState<Set<string>>(new Set());
+  const [confirmDelete,setConfirmDelete]=useState(false),[deleting,setDeleting]=useState(false),[deleteErr,setDeleteErr]=useState('');
+  const deletingRef=useRef(false),root=useRef<HTMLDivElement>(null),itemsRef=useRef(items);
+  itemsRef.current=items;
+  const anchor=useRef<{id:string;top:number}|null>(null),depth=useRef(50),shownQuery=useRef('');
   const generation=useRef(0);
+  function remember(remaining:Entry[]){
+    const ids=new Set(remaining.map(e=>e.id));
+    const rows=Array.from(root.current?.querySelectorAll<HTMLElement>('[data-entry-id]')??[]).filter(el=>ids.has(el.dataset.entryId!));
+    const row=rows.find(el=>el.getBoundingClientRect().bottom>0)??rows.at(-1);
+    anchor.current=row?{id:row.dataset.entryId!,top:row.getBoundingClientRect().top}:null;
+  }
+  useLayoutEffect(()=>{
+    const saved=anchor.current;anchor.current=null;
+    const row=Array.from(root.current?.querySelectorAll<HTMLElement>('[data-entry-id]')??[]).find(el=>el.dataset.entryId===saved?.id);
+    if(saved&&row)shiftDocumentScroll(row.getBoundingClientRect().top-saved.top);
+  },[items,err]);
+  function toggle(id:string){
+    if(deletingRef.current)return;
+    setSelecting(true);setSelected(prev=>{const n=new Set(prev);if(n.has(id))n.delete(id);else if(n.size<1000)n.add(id);return n;});
+  }
+  function cancelSelection(){if(deletingRef.current)return;setSelecting(false);setSelected(new Set());setConfirmDelete(false);setDeleteErr('');}
+  useEffect(()=>{cancelSelection();},[q,filter]);
+  useEffect(()=>{const key=(e:KeyboardEvent)=>{if(e.key==='Escape'&&!confirmDelete)cancelSelection();};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[confirmDelete]);
   const load = useCallback(async (append = false) => {
+    if(deletingRef.current)return;
     const current=++generation.current;setLoading(true);
+    const key=JSON.stringify([q,filter]);const same=shownQuery.current===key;
+    if(!same){depth.current=50;setItems([]);}
     try {
       let cursor=append?next:null;
       let visible:Entry[]=[], following:any=null;
+      const target=append?1:same?depth.current:1;
       do {
         const p=new URLSearchParams({limit:'50'});if(q)p.set('q',q);
         if(cursor){p.set('beforeTime',cursor.beforeTime);p.set('beforeId',cursor.beforeId);}
         const r=await api('GET','/api/entries?'+p);
         if(current!==generation.current)return;
-        visible=r.items.filter((e:Entry)=>filter==='auto'?!e.payload.categoryId&&!!e.effectiveCategoryId:filter==='all'||e.payload.direction===filter);
+        visible.push(...r.items.filter((e:Entry)=>filter==='auto'?!e.payload.categoryId&&!!e.effectiveCategoryId:filter==='all'||e.payload.direction===filter));
         following=r.next;cursor=r.next;
-        // Finite pagination triggered by the filter, never timer polling.
-      }while(!visible.length&&cursor);
-      setItems(prev=>append?[...prev,...visible]:visible);setNext(following);setErr('');
-    }catch(e){if(current===generation.current)setErr((e as Error).message);}
+      }while(visible.length<target&&cursor);
+      const result=append?[...itemsRef.current,...visible]:visible;
+      if(same)remember(result);
+      shownQuery.current=key;depth.current=Math.max(50,result.length);
+      setItems(result);setNext(following);setRefreshHeight(undefined);setErr('');
+    }catch(e){if(current===generation.current){remember(itemsRef.current);setRefreshHeight(undefined);setErr((e as Error).message);}}
     finally{if(current===generation.current)setLoading(false);}
   },[q,next,filter]);
+  async function removeSelected(){
+    if(deletingRef.current||!selected.size)return;
+    deletingRef.current=true;setDeleting(true);setDeleteErr('');generation.current++;
+    const ids=new Set(selected),accountLogin=login;
+    try{
+      await api('POST','/api/entries/delete',{ids:[...ids],confirmation:'DELETE_ENTRIES',accountLogin});
+      if(getState().login!==accountLogin)return;
+      const remaining=itemsRef.current.filter(e=>!ids.has(e.id));remember(remaining);
+      // Keep document height while the next page replaces a fully deleted loaded slice.
+      if(!remaining.length&&next)setRefreshHeight(root.current?.offsetHeight);
+      setItems(remaining);
+      setSelected(new Set());setSelecting(false);setConfirmDelete(false);bump();
+    }catch(e){if(getState().login===accountLogin)setDeleteErr((e as Error).message+' Если ответ потерян, повторное удаление безопасно.');}
+    finally{deletingRef.current=false;setDeleting(false);setLoading(false);}
+  }
   useEffect(()=>{const t=setTimeout(()=>load(false),q?250:0);return ()=>{clearTimeout(t);generation.current++;};},[q,version,filter,queueStatus.count]);
   useEffect(() => { let active=true;if (login) listQueue(login).then(r=>{if(active)setPending(r);}).catch(()=>{if(active)setPending([]);});return ()=>{active=false;}; }, [login, version, items, queueStatus.count]);
   const groups = useMemo(() => { const g = new Map<string, Entry[]>(); for (const e of items) { if(filter==='auto' ? !!e.payload.categoryId || !e.effectiveCategoryId : filter!=='all' && e.payload.direction!==filter)continue; const k = dayLabel(e.occurredAt); (g.get(k) ?? g.set(k, []).get(k)!).push(e); } return [...g]; }, [items,filter]);
-  return <>
+  return <div ref={root} style={{overflowAnchor:'none',minHeight:refreshHeight}}>
     <header className="feed-heading"><div><div className="screen-kicker">QARJY · ВАШИ ФИНАНСЫ</div><h1>Лента</h1></div><button className="header-import" aria-label="Загрузить выписку" onClick={onImport}>{Icons.upload}</button></header>
+    {items.length>0&&<button className="btn small sec" style={{visibility:selecting?'hidden':undefined}} onClick={()=>setSelecting(true)}>Выбрать операции</button>}
+    {selecting&&<div className="selection-bar" role="region" aria-label="Выбор операций">
+      <span role="status">Выбрано: {selected.size}</span><button className="btn small sec" disabled={deleting} onClick={cancelSelection}>Отмена</button>
+      <button className="btn small danger" disabled={deleting||!selected.size} onClick={()=>setConfirmDelete(true)}>Удалить</button>
+    </div>}
+    {confirmDelete&&<Sheet title="Удалить выбранные операции?" onClose={()=>{if(!deletingRef.current)setConfirmDelete(false);}}>
+      <p>Будут удалены выбранные операции: {selected.size}. Восстановления кнопкой нет.</p>
+      {deleteErr&&<div role="alert" className="err">{deleteErr}</div>}
+      <button className="btn danger" disabled={deleting} onClick={removeSelected}>{deleting?'Удаляем…':'Удалить выбранные'}</button>
+      <button className="btn sec" disabled={deleting} onClick={()=>setConfirmDelete(false)}>Отмена</button>
+    </Sheet>}
     {queueStatus.lastResult==='Локальное хранилище недоступно'&&<div className="banner" role="alert">Локальное хранилище недоступно. Новые операции нельзя сохранить на этом устройстве.</div>}
-    <div className="spotlight">{Icons.search}<input aria-label="Поиск" type="search" placeholder="Поиск по получателю и заметке" value={q} onChange={e => setQ(e.target.value)}  /></div>
-    <div className="filter-pills" aria-label="Фильтры операций">{([['all','Все'],['out','Расходы'],['in','Доходы'],['auto','✨ Авто-правила']] as const).map(([key,label])=><button key={key} aria-pressed={filter===key} className={filter===key?'active':''} onClick={()=>setFilter(key)}>{label}</button>)}</div>
+    <div className="spotlight">{Icons.search}<input disabled={deleting} aria-label="Поиск" type="search" placeholder="Поиск по получателю и заметке" value={q} onChange={e => setQ(e.target.value)}  /></div>
+    <div className="filter-pills" aria-label="Фильтры операций">{([['all','Все'],['out','Расходы'],['in','Доходы'],['auto','✨ Авто-правила']] as const).map(([key,label])=><button disabled={deleting} key={key} aria-pressed={filter===key} className={filter===key?'active':''} onClick={()=>setFilter(key)}>{label}</button>)}</div>
     <section className="balance-card" aria-label="Сводка за месяц"><div className="balance-label">Баланс · {monthLabel(thisMonth()).replace(/ г\.$/,'')}</div><div className="balance-value" style={{color:summary?.net?summary.net>0?'var(--green)':'var(--red)':undefined}}>{summary ? fmt(summary.net) : '— ₸'}</div><div className="balance-split"><div><span><i className="flow-dot in"/>Доходы</span><strong>{summary?fmt(summary.in):'—'}</strong></div><div><span><i className="flow-dot out"/>Расходы</span><strong>{summary?fmt(summary.out):'—'}</strong></div></div>{pending.length>0&&<small className="muted">Без ожидающих отправки</small>}</section>
     {err && <div className="banner" role="alert">{err}</div>}
     {pending.length > 0 && <><h2>Ждут отправки ({pending.length})</h2><div className="group">{pending.map(p => <div className="row" key={p.id}>
@@ -94,16 +152,16 @@ export function Feed({ onImport }: {onImport:()=>void}) {
     {!loading && !groups.length && (filter!=='all'||!!q) && <div className="empty">{q?'Ничего не найдено':'Нет операций по выбранному фильтру'}</div>}
     {groups.map(([day, list]) => <section className="day-section" key={day}><h2>{day}</h2><div className="group">{list.map(e => {
       const c = cm.get(e.effectiveCategoryId ?? ''); const p = e.payload;
-      return <button className="row" key={e.id} onClick={() => setEdit(e)} aria-label={`${p.counterparty || 'Без получателя'} ${fmt(p.amountMinor)}`}>
+      return <EntryCard key={e.id} id={e.id} selecting={selecting} selected={selected.has(e.id)} disabled={deleting||selecting&&selected.size>=1000&&!selected.has(e.id)} onSelect={()=>toggle(e.id)} onOpen={()=>setEdit(e)} label={`${p.counterparty || 'Без получателя'} ${fmt(p.amountMinor)}`}>
         <span className="merchant-icon" style={{color:c?.color??'var(--accent)',background:c?.color?c.color+'20':undefined}} aria-hidden="true">{p.direction==='in'?'↙':(p.counterparty||'₸').slice(0,1).toUpperCase()}</span>
         <div className="grow"><div className="ell">{p.counterparty || p.note || 'Без получателя'}</div><div className="sub ell">{c ? c.name : <span className="chip warn">без категории</span>}{!p.categoryId&&c&&<span className="auto-mark" title="Категория по привязке или правилу"> ✨</span>}{p.note && p.counterparty ? ' · ' + p.note : ''}</div></div>
         <span className={'amt ' + p.direction}>{p.direction === 'in' ? '+' : '−'}{fmt(p.amountMinor)}</span>
-      </button>;
+      </EntryCard>;
     })}</div></section>)}
     {loading && <div className="feed-loading" role="status">Обновляем ленту…</div>}
     {next && <button disabled={loading} className="btn sec" style={{ marginTop: 16 }} onClick={() => load(true)}>Показать ещё</button>}
     {edit && <EditSheet e={edit} cats={cats} onClose={() => setEdit(null)} />}
-  </>;
+  </div>;
 }
 
 function EditSheet({ e, cats, onClose }: { e: Entry; cats: Cat[]; onClose: () => void }) {

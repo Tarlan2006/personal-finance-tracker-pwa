@@ -1,4 +1,5 @@
 // Isolated local workerd entry point. Never used by the production wrangler.toml.
+import { deleteTransactions } from '../src/domain/money/entries';
 import { Store } from '../src/env';
 import { runImport, getBatch, undoBatch } from '../src/domain/money/import';
 import {clearHistory} from '../src/domain/money/history';
@@ -76,6 +77,18 @@ export default {
       assert(deleteFailed&&await count('entries',large)===1000&&await count('import_batches',large)===1,'history delete: rollback in D1');
       await env.DB.prepare('DROP TRIGGER runtime_delete_failure').run();store.ops=0;const cleared=await clearHistory(store,large);const clearOps=store.ops;
       assert(cleared.removed===1000&&clearOps===1&&await count('entries',large)===0&&await count('counterparties',large)===0,'history delete: 1000 rows, one atomic D1 batch');
+      const selectedAccount=await account('runtime-selected');
+      await runImport(store,selectedAccount,{csv:csv(1000),mapping});
+      const selectedIds=(await store.all<{id:string}>('SELECT id FROM entries WHERE account_id=?',selectedAccount)).map(e=>e.id);
+      const foreignId=(await store.first<{id:string}>('SELECT id FROM entries WHERE account_id=?',concurrent))!.id;
+      await env.DB.prepare("CREATE TRIGGER runtime_selected_failure BEFORE UPDATE OF deleted_at ON entries WHEN NEW.id='"+selectedIds[1]+"' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END").run();
+      let selectedFailed=false;try{await deleteTransactions(store,selectedAccount,selectedIds);}catch{selectedFailed=true;}
+      assert(selectedFailed&&(await store.first<any>('SELECT count(*) AS n FROM entries WHERE account_id=? AND deleted_at IS NOT NULL',selectedAccount))!.n===0,'selected delete: atomic rollback');
+      await env.DB.prepare('DROP TRIGGER runtime_selected_failure').run();store.ops=0;
+      const selectedResult=await deleteTransactions(store,selectedAccount,[...selectedIds.slice(0,999),foreignId]);const selectedOps=store.ops;
+      assert(selectedResult.removed===999&&selectedOps===1,'selected delete: bounded single statement');
+      assert((await store.first<any>('SELECT deleted_at FROM entries WHERE account_id=? AND id=?',concurrent,foreignId))!.deleted_at===null,'selected delete: account isolation');
+      assert((await deleteTransactions(store,selectedAccount,selectedIds.slice(0,999))).removed===0,'selected delete: safe retry');
       return Response.json({passed:true,checks,writeOps,dryOps});
     } catch(e:any) { return Response.json({passed:false,checks,failedCheck:String(e.message)},{status:500}); }
   }

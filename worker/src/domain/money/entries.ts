@@ -122,6 +122,16 @@ export async function updateTx(store: Store, accountId: string, id: string, body
 }
 
 /** Мягкое удаление; повтор безопасен. */
+export async function deleteTransactions(store: Store, accountId: string, ids: unknown) {
+  if (!Array.isArray(ids) || !ids.length || ids.length > 1000 || ids.some(id => typeof id !== 'string' || !ID_RE.test(id)))
+    throw new HttpError(400, 'bad_ids', 'Выберите от 1 до 1000 операций');
+  const t = now();
+  const r = await store.run(`UPDATE entries SET deleted_at=?, updated_at=?, version=version+1
+    WHERE account_id=? AND kind='tx' AND deleted_at IS NULL AND id IN (SELECT value FROM json_each(?))`,
+    t, t, accountId, JSON.stringify([...new Set(ids)]));
+  return { removed: r.meta?.changes ?? 0 };
+}
+
 export async function deleteTx(store: Store, accountId: string, id: string) {
   const r = await store.run('UPDATE entries SET deleted_at = COALESCE(deleted_at, ?), updated_at = ?, version = version + 1 WHERE account_id = ? AND id = ?', now(), now(), accountId, id);
   if (!r.meta?.changes) throw new HttpError(404, 'not_found', 'Запись не найдена');
