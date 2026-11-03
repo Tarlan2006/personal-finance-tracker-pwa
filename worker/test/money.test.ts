@@ -176,7 +176,7 @@ describe('импорт: ни одна строка не теряется', () =>
   it('откат импорта убирает записи и разрешает повторный импорт', async () => {
     const { env, o } = await setup();
     const r = (await call(env, 'POST', '/api/import', { cookie: o, body: { csv: CSV, mapping: MAP } })).data;
-    expect((await call(env, 'DELETE', `/api/import/batches/${r.batchId}`, { cookie: o })).data.removed).toBe(4);
+    expect((await call(env, 'DELETE', `/api/import/batches/${r.batchId}`, { cookie: o, body:{confirmation:'DELETE_DOCUMENT',accountLogin:'owner'} })).data.removed).toBe(4);
     const again = (await call(env, 'POST', '/api/import', { cookie: o, body: { csv: CSV, mapping: MAP } })).data;
     expect(again.imported).toBe(4);
   });
@@ -344,4 +344,65 @@ describe('служебные строки в отчётах импорта',()=>
     const {env,o}=await setup();const r=await call(env,'POST','/api/import',{cookie:o,body:{bank:'generic',csv:'date;amount;name;class;reason\nBAD;-1;SYNTHETIC;service;служебная строка или продолжение описания\n;;;;',mapping:{dateCol:0,amountCol:1,counterpartyCol:2,serviceCol:3,rejectionCol:4}}});
     expect(r.data).toMatchObject({total:2,imported:0,rejected:1,service:1});expect(r.data.rows.map((r:any)=>r.status)).toEqual(['rejected','service']);
   });
+});
+
+describe('удаление документов и полная история',()=>{
+ const body={csv:'date;amount;name\n01.11.2026;-17;SYNTHETIC SHARED\n02.11.2026;-23;SYNTHETIC PRIVATE',mapping:MAP,filename:'synthetic-document.csv'};
+ const del={confirmation:'DELETE_DOCUMENT',accountLogin:'owner'},clear={confirmation:'DELETE_ALL_HISTORY',accountLogin:'owner'};
+ it('подтверждение обязательно; документ удаляется целиком, повтор безопасен, дубли и ручные записи изолированы',async()=>{
+  const {env,o,x,store}=await setup();const a=(await call(env,'POST','/api/import',{cookie:o,body})).data;
+  await call(env,'POST','/api/entries',{cookie:o,body:{id:'manual-history-01',direction:'out',amountMinor:11,counterparty:'SYNTHETIC SHARED'}});
+  const duplicate=(await call(env,'POST','/api/import',{cookie:o,body:{...body,csv:body.csv+'\n03.11.2026;-19;SYNTHETIC OVERLAP'}})).data;expect(duplicate.duplicates).toBe(2);expect(duplicate.imported).toBe(1);
+  expect((await call(env,'DELETE','/api/import/batches/'+a.batchId,{cookie:o,body:{}})).status).toBe(400);
+  expect((await call(env,'DELETE','/api/import/batches/'+a.batchId,{cookie:x,body:{...del,accountLogin:'other'}})).data.removed).toBe(0);
+  expect((await call(env,'DELETE','/api/import/batches/'+duplicate.batchId,{cookie:o,body:del})).data.removed).toBe(1);
+  const items=(await call(env,'GET','/api/entries',{cookie:o})).data.items;const changed=items.find((e:any)=>e.importId===a.batchId)??items.find((e:any)=>e.source==='import');
+  expect((await call(env,'PATCH','/api/entries/'+changed.id,{cookie:o,body:{version:changed.version,note:'synthetic edit'}})).status).toBe(200);
+  const old=items.find((e:any)=>e.source==='import'&&e.id!==changed.id);expect((await call(env,'DELETE','/api/entries/'+old.id,{cookie:o})).status).toBe(200);
+  expect((await call(env,'DELETE','/api/import/batches/'+a.batchId,{cookie:o,body:del})).data.removed).toBe(2);
+  expect((await call(env,'GET','/api/import/batches/'+a.batchId,{cookie:o})).status).toBe(404);
+  expect((await store.first<any>('SELECT count(*) n FROM entries WHERE import_id=?',a.batchId))?.n).toBe(0);
+  expect((await call(env,'GET','/api/entries',{cookie:o})).data.items.map((e:any)=>e.id)).toEqual(['manual-history-01']);
+  expect((await call(env,'GET','/api/counterparties',{cookie:o})).data.counterparties.map((c:any)=>c.display)).toEqual(['SYNTHETIC SHARED']);
+  expect((await call(env,'DELETE','/api/import/batches/'+a.batchId,{cookie:o,body:del})).data.removed).toBe(0);
+  expect((await call(env,'POST','/api/import',{cookie:o,body})).data.imported).toBe(2);
+ });
+ it('summary/clear: изоляция аккаунтов, сохранность профиля/категорий, идемпотентность и новый импорт',async()=>{
+  const {env,o,x,store}=await setup();await call(env,'POST','/api/import',{cookie:o,body});await call(env,'POST','/api/import',{cookie:x,body});
+  expect((await call(env,'GET','/api/history/summary')).status).toBe(401);
+  expect((await call(env,'POST','/api/history/clear',{body:clear})).status).toBe(401);
+  expect((await call(env,'POST','/api/history/clear',{cookie:o,body:{confirmation:'wrong'}})).status).toBe(400);
+  const cats=(await call(env,'GET','/api/categories',{cookie:o})).data;await call(env,'POST','/api/rules',{cookie:o,body:{pattern:'synthetic-preserved',categoryId:cats.categories.find((c:any)=>c.type==='expense').id}});const rules=(await call(env,'GET','/api/rules',{cookie:o})).data;await call(env,'PUT','/api/financial-profile',{cookie:o,body:{version:0,status:'deferred',profile:{balanceDate:'2026-11-01',accounts:[{id:'synthetic-account',bank:'Kaspi',name:'SYNTHETIC CARD',kind:'card',openingBalanceMinor:12345}],expenseCategoryIds:[],monthlyBudgetMinor:null,incomes:[],obligations:[],householdSize:1,goal:'SYNTHETIC GOAL',goalTargetMinor:null,monthlySavingMinor:null}}});const profile=(await call(env,'GET','/api/financial-profile',{cookie:o})).data;expect(profile).toMatchObject({status:'deferred',version:1,profile:{goal:'SYNTHETIC GOAL'}});
+  expect((await call(env,'GET','/api/history/summary',{cookie:o})).data).toMatchObject({operations:2,documents:1});
+  const result=await call(env,'POST','/api/history/clear',{cookie:o,body:clear});expect(result.data).toMatchObject({removed:2,documents:1,counterparties:2});expect(Number(result.headers.get('X-Storage-Ops'))).toBeLessThanOrEqual(3);
+  expect((await call(env,'GET','/api/history/summary',{cookie:o})).data).toMatchObject({operations:0,storedOperations:0,documents:0,counterparties:0});
+  expect((await call(env,'GET','/api/history/summary',{cookie:x})).data).toMatchObject({operations:2,documents:1});
+  expect((await call(env,'GET','/api/categories',{cookie:o})).data).toEqual(cats);expect((await call(env,'GET','/api/rules',{cookie:o})).data).toEqual(rules);expect((await call(env,'GET','/api/financial-profile',{cookie:o})).data).toEqual(profile);
+  expect((await call(env,'POST','/api/history/clear',{cookie:o,body:clear})).data.removed).toBe(0);
+  expect((await call(env,'POST','/api/import',{cookie:o,body})).data.imported).toBe(2);
+ });
+ for(const action of ['document','all'])it(`сбой ${action}: транзакция откатывает получателей, операции и отчёт`,async()=>{
+  const {env,o,local,store}=await setup();const r=(await call(env,'POST','/api/import',{cookie:o,body})).data;
+  local.raw.exec("CREATE TRIGGER history_delete_failure BEFORE DELETE ON import_batches BEGIN SELECT RAISE(ABORT,'synthetic failure'); END");
+  const response=action==='document'?await call(env,'DELETE','/api/import/batches/'+r.batchId,{cookie:o,body:del}):await call(env,'POST','/api/history/clear',{cookie:o,body:clear});expect(response.status).toBe(500);
+  expect((await call(env,'GET','/api/history/summary',{cookie:o})).data).toMatchObject({operations:2,documents:1,counterparties:2});
+ });
+ it('история: страницы без потерь при одинаковом времени; курсор изолирован и валидируется',async()=>{
+  const {env,o,x,store}=await setup();const owner=(await store.first<any>("SELECT id FROM accounts WHERE login='owner'"))!.id;
+  await store.batch(Array.from({length:53},(_,i)=>store.stmt("INSERT INTO import_batches (id,account_id,source,filename,created_at,total,imported,duplicates,rejected,service,report_json) VALUES (?,?, 'generic','synthetic',1,0,0,0,0,0,'[]')",'page-'+String(i).padStart(3,'0'),owner)));
+  const first=(await call(env,'GET','/api/import/batches',{cookie:o})).data;expect(first.batches).toHaveLength(50);
+  const second=(await call(env,'GET','/api/import/batches?before='+encodeURIComponent(first.next),{cookie:o})).data;expect(second.batches).toHaveLength(3);expect(new Set([...first.batches,...second.batches].map((b:any)=>b.id)).size).toBe(53);
+  expect((await call(env,'GET','/api/import/batches?before='+encodeURIComponent(first.next),{cookie:x})).data.batches).toEqual([]);
+  expect((await call(env,'GET','/api/import/batches?before=bad',{cookie:o})).status).toBe(400);
+ });
+});
+
+it('история: смена cookie в другой вкладке не меняет аккаунт подтверждённого действия',async()=>{
+ const {env,o,x}=await setup();const body={csv:'date;amount;name\n01.11.2026;-1;ACCOUNT BINDING',mapping:MAP};
+ const owner=(await call(env,'POST','/api/import',{cookie:o,body})).data;await call(env,'POST','/api/import',{cookie:x,body});
+ for(const [method,path,confirmation] of [['POST','/api/history/clear','DELETE_ALL_HISTORY'],['DELETE','/api/import/batches/'+owner.batchId,'DELETE_DOCUMENT']]){
+  expect((await call(env,method,path,{cookie:x,body:{confirmation,accountLogin:'owner'}})).status).toBe(409);
+ }
+ expect((await call(env,'POST','/api/import',{cookie:x,body:{...body,accountLogin:'owner'}})).status).toBe(409);
+ for(const cookie of [o,x])expect((await call(env,'GET','/api/history/summary',{cookie})).data).toMatchObject({operations:1,documents:1});
 });

@@ -17,7 +17,7 @@ it('локальная существующая база получает нов
     expect(local.raw.prepare('SELECT count(*) n FROM categories').get()).toMatchObject({n:12});
     expect(local.raw.prepare('SELECT count(*) n FROM financial_profiles').get()).toMatchObject({n:0});
     local.raw.close();local=createLocalD1(file,MIGRATIONS);
-    expect(local.raw.prepare('SELECT count(*) n FROM local_schema_migrations').get()).toMatchObject({n:4});
+    expect(local.raw.prepare('SELECT count(*) n FROM local_schema_migrations').get()).toMatchObject({n:5});
     expect(local.raw.prepare('SELECT count(*) n FROM categories').get()).toMatchObject({n:12});
   }finally{local.raw.close();for(const suffix of ['','-shm','-wal'])if(existsSync(file+suffix))unlinkSync(file+suffix);}
 });

@@ -1,3 +1,4 @@
+import {importStatement} from './import-helper';
 import {test,expect,type Page} from '@playwright/test';
 import {readFileSync} from 'node:fs';
 const examples=JSON.parse(readFileSync('worker/test/fixtures/examples.json','utf8'));
@@ -22,7 +23,7 @@ test('запуск: потерянный JS оставляет HTML-сообще
 });
 test('приватный режим: запрет localStorage и регистрации SW не мешает входу',async({page})=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await page.addInitScript(()=>{Object.defineProperty(window,'localStorage',{get(){throw new DOMException('Synthetic denied','SecurityError');}});Object.defineProperty(navigator,'serviceWorker',{get(){throw new DOMException('Synthetic denied','SecurityError');}});});
- await login(page);await page.reload();await expect(page.getByRole('heading',{name:'Лента',exact:true})).toBeVisible();expect(errors).toEqual([]);
+ await login(page);await expect(page.getByRole('status').filter({hasText:'Обновляем ленту'})).toHaveCount(0);await page.reload();await expect(page.getByRole('heading',{name:'Лента',exact:true})).toBeVisible();await expect(page.getByRole('status').filter({hasText:'Обновляем ленту'})).toHaveCount(0);expect(errors).toEqual([]);
 });
 test('PDF: сбой чтения файла из облака, повторный выбор того же файла',async({page})=>{
  await login(page);await page.getByRole('navigation').getByRole('button',{name:'Выписка',exact:true}).click();await page.getByRole('radio',{name:'Kaspi PDF',exact:true}).check();
@@ -36,8 +37,8 @@ for(const [bank,fixture] of [['kaspi','gold'],['halyk','statement'],['freedom','
  await login(page);const before=await page.evaluate(async()=>new Set((await(await fetch('/api/entries?limit=200')).json()).items.map((e:any)=>e.id)).size);
  await page.getByRole('navigation').getByRole('button',{name:'Выписка',exact:true}).click();await page.getByRole('radio',{name:(bank==='kaspi'?'Kaspi':bank==='halyk'?'Halyk':'Freedom')+' PDF',exact:true}).check();await input(page).setInputFiles(`worker/test/fixtures/${bank}/${fixture}.pdf`);
  let lost:any;await page.route('**/api/import',async route=>{lost=await(await route.fetch()).json();await route.abort();},{times:1});
- await page.getByRole('button',{name:'Импортировать',exact:true}).click();await expect(page.getByRole('alert')).toContainText('Нет связи');expect(lost).toMatchObject(expected);
- await page.getByRole('button',{name:'Импортировать',exact:true}).click();const report=page.getByTestId('import-report');await expect(report).toContainText('Добавлено0');await expect(report).toContainText(`Уже были (повторы)${expected.imported}`);await expect(report).toContainText(`Отклонено${expected.rejected}`);await expect(report).toContainText(`Служебные строки${expected.service}`);
+ await importStatement(page);await expect(page.getByRole('alert')).toContainText('Нет связи');expect(lost).toMatchObject(expected);
+ await importStatement(page);const report=page.getByTestId('import-report');await expect(report).toContainText('Добавлено0');await expect(report).toContainText(`Уже были (повторы)${expected.imported}`);await expect(report).toContainText(`Отклонено${expected.rejected}`);await expect(report).toContainText(`Служебные строки${expected.service}`);
  const after=await page.evaluate(async()=>new Set((await(await fetch('/api/entries?limit=200')).json()).items.map((e:any)=>e.id)).size);expect(after-before).toBe(expected.imported);
 });
 test('прокрутка: короткий и горизонтальный экран, фокус и повторное закрытие шторки',async({page})=>{

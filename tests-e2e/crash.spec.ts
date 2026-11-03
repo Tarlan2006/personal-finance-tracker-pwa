@@ -1,3 +1,4 @@
+import {importStatement} from './import-helper';
 import {test,expect,type Page} from '@playwright/test';
 import {readFileSync} from 'node:fs';
 const scenario=JSON.parse(readFileSync('tests-e2e/fixtures/crash-scenario.json','utf8').replace(/^\uFEFF/,''));
@@ -54,8 +55,8 @@ test('краш: лимит 30 счетов, удаление не меняет �
 });
 test('краш: предсказуемый CSV, повтор и все 150 отклонённых строк видимы',async({page})=>{
  await page.getByRole('navigation').getByRole('button',{name:'Выписка',exact:true}).click();await page.getByRole('radio',{name:'Универсальный CSV',exact:true}).check();
- await page.getByLabel('Файл выписки').setInputFiles({name:'audit.csv',mimeType:'text/csv',buffer:Buffer.from(scenario.csv)});await page.getByRole('button',{name:'Импортировать',exact:true}).click();
- await expect(page.getByTestId('import-report')).toContainText('Добавлено3');await page.getByRole('button',{name:'Импортировать',exact:true}).click();await expect(page.getByTestId('import-report')).toContainText('Добавлено0');await expect(page.getByTestId('import-report')).toContainText('Уже были (повторы)3');
+ await page.getByLabel('Файл выписки').setInputFiles({name:'audit.csv',mimeType:'text/csv',buffer:Buffer.from(scenario.csv)});await importStatement(page);
+ await expect(page.getByTestId('import-report')).toContainText('Добавлено3');await importStatement(page);await expect(page.getByTestId('import-report')).toContainText('Добавлено0');await expect(page.getByTestId('import-report')).toContainText('Уже были (повторы)3');
  const entries=await page.evaluate(async()=>(await(await fetch('/api/entries?q=AUDIT%20SYNTHETIC')).json()).items);
  expect(entries).toHaveLength(3);expect(entries.filter((e:any)=>e.payload.direction==='out').reduce((n:number,e:any)=>n+e.payload.amountMinor,0)).toBe(scenario.expectedTotals.out);expect(entries.filter((e:any)=>e.payload.direction==='in').reduce((n:number,e:any)=>n+e.payload.amountMinor,0)).toBe(scenario.expectedTotals.in);
  const bad='Дата;Сумма;Контрагент\n'+Array.from({length:150},(_,i)=>`INVALID;-1;AUDIT REJECTED ${i}`).join('\n');
@@ -110,10 +111,10 @@ test('краш: запрет IndexedDB не блокирует вход и не 
 test('отчёт: 320 операций и 70 служебных строк, история и полная пагинация',async({page})=>{
  await page.getByRole('navigation').getByRole('button',{name:'Выписка',exact:true}).click();await page.getByRole('radio',{name:'Универсальный CSV',exact:true}).check();
  const csv='Дата;Сумма;Контрагент\n'+Array.from({length:320},(_,i)=>`01.11.2026;-${(100+i)/100};AUDIT SERVICE FLOW ${i}`).join('\n')+'\n'+Array(70).fill(';;').join('\n');
- await page.getByLabel('Файл выписки').setInputFiles({name:'audit-service-rows.csv',mimeType:'text/csv',buffer:Buffer.from(csv)});await page.getByRole('button',{name:'Импортировать',exact:true}).click();const report=page.getByTestId('import-report');
+ await page.getByLabel('Файл выписки').setInputFiles({name:'audit-service-rows.csv',mimeType:'text/csv',buffer:Buffer.from(csv)});await importStatement(page);const report=page.getByTestId('import-report');
  await expect(report).toContainText('Всего строк390');await expect(report).toContainText('Добавлено320');await expect(report).toContainText('Отклонено0');await expect(report).toContainText('Служебные строки70');await expect(page.getByRole('region',{name:'Отклонённые операции',exact:true})).toHaveCount(0);
  await expect(page.getByTestId('service-row-result')).toHaveCount(0);await page.getByRole('button',{name:'Показать служебные строки (70)',exact:true}).click();await expect(page.getByTestId('service-row-result')).toHaveCount(70);
- await page.getByRole('button',{name:'Импортировать',exact:true}).click();await expect(report).toContainText('Добавлено0');await expect(report).toContainText('Уже были (повторы)320');await expect(report).toContainText('Служебные строки70');
+ await importStatement(page);await expect(report).toContainText('Добавлено0');await expect(report).toContainText('Уже были (повторы)320');await expect(report).toContainText('Служебные строки70');
  const totals=await page.evaluate(async()=>{let count=0,sum=0,next:any=null;do{const p=new URLSearchParams({q:'AUDIT SERVICE FLOW',limit:'200'});if(next){p.set('beforeTime',String(next.beforeTime));p.set('beforeId',next.beforeId);}const r=await(await fetch('/api/entries?'+p)).json();count+=r.items.length;sum+=r.items.reduce((n:number,e:any)=>n+e.payload.amountMinor,0);next=r.next;}while(next);return{count,sum};});expect(totals).toEqual({count:320,sum:83040});
  await page.getByLabel('Файл выписки').setInputFiles({name:'only-service.csv',mimeType:'text/csv',buffer:Buffer.from('date;amount\n'+Array(150).fill(';').join('\n'))});await page.getByRole('button',{name:'Проверить',exact:true}).click();await expect(report).toContainText('Служебные строки150');await expect(report).toContainText('Отклонено0');
  await page.getByRole('button',{name:'Показать служебные строки (150)',exact:true}).click();await expect(page.getByTestId('service-row-result')).toHaveCount(100);await page.getByRole('button',{name:'Показать ещё служебные строки',exact:true}).click();await expect(page.getByTestId('service-row-result')).toHaveCount(150);

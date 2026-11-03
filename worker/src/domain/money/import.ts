@@ -181,10 +181,13 @@ export async function runImport(store: Store, accountId: string, input: { csv?: 
   return report;
 }
 
-export async function listBatches(store:Store,accountId:string){
+export async function listBatches(store:Store,accountId:string,cursor?:string|null){
+  let before:any=null;
+  if(cursor){if(cursor.length>512)throw new HttpError(400,'bad_cursor','Некорректная страница истории');try{before=JSON.parse(cursor);}catch{throw new HttpError(400,'bad_cursor','Некорректная страница истории');}if(!Number.isSafeInteger(before?.time)||typeof before?.id!=='string'||!before.id||before.id.length>120)throw new HttpError(400,'bad_cursor','Некорректная страница истории');}
   const batches=await store.all<any>(`SELECT id,source,filename,created_at,total,imported,duplicates,rejected,service,
+    (SELECT count(*) FROM entries e WHERE e.account_id=import_batches.account_id AND e.import_id=import_batches.id AND e.deleted_at IS NULL) AS activeOperations,
     CASE WHEN service=0 AND rejected>0 AND (instr(report_json,?)>0 OR instr(report_json,'пустая строка')>0) THEN report_json ELSE NULL END AS legacy_rows
-    FROM import_batches WHERE account_id=? ORDER BY created_at DESC LIMIT 50`,LEGACY_SERVICE_REASON,accountId);
+    FROM import_batches WHERE account_id=? ${before?'AND (created_at<? OR (created_at=? AND id<?))':''} ORDER BY created_at DESC,id DESC LIMIT 50`,LEGACY_SERVICE_REASON,accountId,...(before?[before.time,before.time,before.id]:[]));
   return batches.map(({legacy_rows,...b})=>{if(!legacy_rows)return b;const result=presentImportReport({...b,rows:JSON.parse(legacy_rows)},b.source);const {rows,...summary}=result;return summary;});
 }
 export async function getBatch(store: Store, accountId: string, id: string) {
@@ -192,8 +195,14 @@ export async function getBatch(store: Store, accountId: string, id: string) {
   if (!b) throw new HttpError(404, 'not_found', 'Импорт не найден');
   return presentImportReport({ ...b, report_json: undefined, rows: JSON.parse(b.report_json) },b.source);
 }
-/** Откат импорта целиком (мягкое удаление записей пакета). */
+/** Delete the document and its owned operations atomically; duplicates own no entries. */
 export async function undoBatch(store: Store, accountId: string, id: string) {
-  const r = await store.run('UPDATE entries SET deleted_at = ?, updated_at = ?, dedupe_key = NULL, version = version + 1 WHERE account_id = ? AND import_id = ? AND deleted_at IS NULL', now(), now(), accountId, id);
-  return { removed: r.meta?.changes ?? 0 };
+  const result=await store.batch([
+    store.stmt(`DELETE FROM counterparties WHERE account_id=?
+      AND EXISTS(SELECT 1 FROM import_batches b WHERE b.account_id=? AND b.id=?)
+      AND NOT EXISTS(SELECT 1 FROM entries e INDEXED BY idx_entries_history_search WHERE e.account_id=? AND e.search>=counterparties.name_norm AND e.search<counterparties.name_norm||char(1114111) AND (e.import_id IS NULL OR e.import_id<>?) AND (e.search=counterparties.name_norm OR substr(e.search,1,length(counterparties.name_norm)+1)=counterparties.name_norm||' '))`,accountId,accountId,id,accountId,id),
+    store.stmt('DELETE FROM entries WHERE account_id=? AND import_id=?',accountId,id),
+    store.stmt('DELETE FROM import_batches WHERE account_id=? AND id=?',accountId,id),
+  ]);
+  return {removed:result[1].meta?.changes??0,documents:result[2].meta?.changes??0};
 }

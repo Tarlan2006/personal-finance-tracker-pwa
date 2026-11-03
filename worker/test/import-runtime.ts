@@ -1,6 +1,7 @@
 // Isolated local workerd entry point. Never used by the production wrangler.toml.
 import { Store } from '../src/env';
-import { runImport, getBatch } from '../src/domain/money/import';
+import { runImport, getBatch, undoBatch } from '../src/domain/money/import';
+import {clearHistory} from '../src/domain/money/history';
 import { MAX_IMPORT_REPORT_BYTES } from '../src/domain/money/import-limits';
 import { createCategory, updateCategory, deleteCategory } from '../src/domain/money/categories';
 
@@ -68,6 +69,13 @@ export default {
       const concurrent=await account('runtime-concurrent');
       const pair=await Promise.all([runImport(store,concurrent,{csv:csv(50),mapping}),runImport(store,concurrent,{csv:csv(50),mapping})]);
       assert(pair.reduce((n,r)=>n+r.imported,0)===50&&pair.reduce((n,r)=>n+r.duplicates,0)===50&&await count('entries',concurrent)===50,'concurrent: exact statuses');
+      store.ops=0;const deleted=await undoBatch(store,bulk,r.batchId!);const deleteOps=store.ops;
+      assert(deleted.removed===500&&deleteOps===1&&await count('entries',bulk)===0&&await count('counterparties',bulk)===0,'document delete: 500 rows, one atomic D1 batch');
+      await env.DB.prepare("CREATE TRIGGER runtime_delete_failure BEFORE DELETE ON import_batches BEGIN SELECT RAISE(ABORT,'synthetic failure'); END").run();
+      let deleteFailed=false;try{await clearHistory(store,large);}catch{deleteFailed=true;}
+      assert(deleteFailed&&await count('entries',large)===1000&&await count('import_batches',large)===1,'history delete: rollback in D1');
+      await env.DB.prepare('DROP TRIGGER runtime_delete_failure').run();store.ops=0;const cleared=await clearHistory(store,large);const clearOps=store.ops;
+      assert(cleared.removed===1000&&clearOps===1&&await count('entries',large)===0&&await count('counterparties',large)===0,'history delete: 1000 rows, one atomic D1 batch');
       return Response.json({passed:true,checks,writeOps,dryOps});
     } catch(e:any) { return Response.json({passed:false,checks,failedCheck:String(e.message)},{status:500}); }
   }

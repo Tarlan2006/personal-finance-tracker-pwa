@@ -1,8 +1,9 @@
+import { HistoryPanel } from './history';
 import { ImportReportView } from './import-report';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { api, ApiError, pauseRemainingSec } from './api';
 import { getQueueStatus, subscribeQueue, listQueue, retryFailed, flush } from './queue';
-import { applyTheme, bump, Field, fmt, getState, loadCats, monthLabel, savedTheme, shiftMonth, Sheet, thisMonth, useAppState, type Cat } from './ui';
+import { applyTheme, bump, Field, fmt, getState, setState, loadCats, monthLabel, savedTheme, shiftMonth, Sheet, thisMonth, useAppState, type Cat } from './ui';
 import { doLogout } from './screens1';
 import { FinancialProfileScreen } from './onboarding';
 
@@ -76,17 +77,17 @@ function PickCategory({ cp, dir, cats, onClose }: { cp: { name: string; display:
 }
 
 // ---------- Ещё ----------
-type Sub = null | 'cats' | 'keys' | 'devices' | 'import' | 'sync' | 'password' | 'theme' | 'profile';
+type Sub = null | 'cats' | 'keys' | 'devices' | 'import' | 'sync' | 'password' | 'theme' | 'profile' | 'history';
 export function More({ onImported, onViewFeed }: { onImported?: (n:number)=>void; onViewFeed?:()=>void } = {}) {
   const { name, login } = useAppState(); const [sub, setSub] = useState<Sub>(null); const [lerr, setLerr] = useState('');
-  if (sub) return <><button className="back" onClick={() => setSub(null)}>‹ Ещё</button>{{ profile:<FinancialProfileScreen/>, cats: <Categories />, keys: <Keys />, devices: <Devices />, import: <Import onImported={onImported} onViewFeed={onViewFeed} />, sync: <Sync />, password: <Password />, theme: <Theme /> }[sub]}</>;
+  if (sub) return <><button className="back" onClick={() => setSub(null)}>‹ Ещё</button>{{ history:<><h1>История и очистка</h1><HistoryPanel/></>, profile:<FinancialProfileScreen/>, cats: <Categories />, keys: <Keys />, devices: <Devices />, import: <Import onImported={onImported} onViewFeed={onViewFeed} />, sync: <Sync />, password: <Password />, theme: <Theme /> }[sub]}</>;
   const item = (s: Sub, label: string, hint?: string) => <button className="row" onClick={() => setSub(s)}><span className="grow">{label}</span><span className="sub">{hint}</span><span className="sub">›</span></button>;
   return <>
     <h1>Ещё</h1>
     <div className="group"><div className="row"><div className="grow"><div>{name}</div><div className="sub">{login}</div></div></div></div>
     <h2>Мои финансы</h2><div className="group">{item('profile','Финансовый профиль','Счета, доходы, цели')}</div>
     <h2>Данные</h2>
-    <div className="group">{item('import', 'Загрузить выписку')}{item('cats', 'Категории и правила')}<a className="row" href="/api/export.csv" download style={{ textDecoration: 'none' }}><span className="grow">Экспорт CSV</span><span className="sub">›</span></a></div>
+    <div className="group">{item('import', 'Загрузить выписку')}{item('history','История и очистка')}{item('cats', 'Категории и правила')}<a className="row" href="/api/export.csv" download style={{ textDecoration: 'none' }}><span className="grow">Экспорт CSV</span><span className="sub">›</span></a></div>
     <h2>Интеграции</h2><div className="group">{item('keys', 'Быстрые команды (ключи)')}</div>
     <h2>Приложение</h2><div className="group">{item('sync', 'Синхронизация')}{item('theme', 'Тема')}</div>
     <h2>Безопасность</h2><div className="group">{item('devices', 'Устройства')}{item('password', 'Сменить пароль')}</div>
@@ -203,7 +204,7 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
   const [file, setFile] = useState<{ name: string; text: string; header: string[]; delim: string; pdfBase64?: string } | null>(null);
   const [m, setM] = useState<{ date: number; amount: number; cp: number; note: number; mode: 'signed' | 'split' | 'dir'; debit: number; credit: number; dirCol: number; inV: string; outV: string }>({ date: 0, amount: 1, cp: -1, note: -1, mode: 'signed', debit: -1, credit: -1, dirCol: -1, inV: '', outV: '' });
   const [rep, setRep] = useState<any>(null); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
-  const [history,setHistory]=useState<any[]|null>(null);const [historyBusy,setHistoryBusy]=useState(false);const readGeneration=useRef(0);
+  const [confirmImport,setConfirmImport]=useState(false);const importing=useRef(false);const readGeneration=useRef(0);
   useEffect(()=>()=>{readGeneration.current++;},[]);
   async function pick(f: File | undefined) {
     if (!f) return; const generation=++readGeneration.current;setRep(null); setErr(''); setFile(null);
@@ -226,9 +227,9 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
     setFile({ name: f.name, text, header, delim });
     }catch{if(generation===readGeneration.current)setErr('Не удалось прочитать файл. Выберите его ещё раз');}
   }
-  const body = (dryRun: boolean) => ({ bank, pdfBase64: file!.pdfBase64, csv: file!.text, filename: file!.name, dryRun, mapping: { delimiter: file!.delim, hasHeader: true, dateCol: m.date, counterpartyCol: m.cp >= 0 ? m.cp : undefined, noteCol: m.note >= 0 ? m.note : undefined,
+  const body = (dryRun: boolean) => ({ accountLogin:getState().login,bank, pdfBase64: file!.pdfBase64, csv: file!.text, filename: file!.name, dryRun, mapping: { delimiter: file!.delim, hasHeader: true, dateCol: m.date, counterpartyCol: m.cp >= 0 ? m.cp : undefined, noteCol: m.note >= 0 ? m.note : undefined,
     ...(m.mode === 'signed' ? { amountCol: m.amount } : m.mode === 'split' ? { debitCol: m.debit >= 0 ? m.debit : undefined, creditCol: m.credit >= 0 ? m.credit : undefined } : { amountCol: m.amount, directionCol: m.dirCol, inValues: m.inV.split(',').map(s => s.trim()).filter(Boolean), outValues: m.outV.split(',').map(s => s.trim()).filter(Boolean) }) } });
-  async function run(dry: boolean) { setBusy(true); setErr(''); try { const r = await api('POST', '/api/import', body(dry)); setRep(r); if (!dry) { bump(); onImported?.(r.imported); } } catch (e) { setErr((e as ApiError).message); } finally { setBusy(false); } }
+  async function run(dry: boolean) { if(importing.current)return;importing.current=true;setState({activeImports:getState().activeImports+1});setConfirmImport(false);setBusy(true); setErr(''); try { const r = await api('POST', '/api/import', body(dry)); setRep({...r,mappingSnapshot:JSON.stringify(m)}); if (!dry) { bump(); onImported?.(r.imported); } } catch (e) { setErr((e as ApiError).message); } finally { importing.current=false;setState({activeImports:Math.max(0,getState().activeImports-1)});setBusy(false); } }
   const sel = (label: string, key: 'date' | 'amount' | 'cp' | 'note' | 'debit' | 'credit' | 'dirCol', optional = false) => <Field label={label}><select aria-label={label} value={m[key]} onChange={e => setM({ ...m, [key]: Number(e.target.value) })}>{optional && <option value={-1}>— нет —</option>}{file!.header.map((h, i) => <option key={i} value={i}>{h || `Колонка ${i + 1}`}</option>)}</select></Field>;
   return <>
     <div className="screen-kicker">ИМПОРТ ОПЕРАЦИЙ</div><h1>Выписка</h1><div className="import-hero" aria-hidden="true">↥</div>
@@ -254,11 +255,11 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
       {m.mode === 'dir' && <>{sel('Колонка типа операции', 'dirCol')}<Field label="Значения дохода (через запятую)"><input aria-label="Значения дохода" value={m.inV} onChange={e => setM({ ...m, inV: e.target.value })} /></Field><Field label="Значения расхода (через запятую)"><input aria-label="Значения расхода" value={m.outV} onChange={e => setM({ ...m, outV: e.target.value })} /></Field></>}
       {sel('Получатель / отправитель', 'cp', true)}{sel('Описание', 'note', true)}</>}
       {err && <div className="err" role="alert">{err}</div>}
-      <div style={{ display: 'flex', gap: 8 }}><button className="btn sec" disabled={busy} onClick={() => run(true)}>Проверить</button><button className="btn" disabled={busy} onClick={() => run(false)}>Импортировать</button></div>
+      <div style={{ display: 'flex', gap: 8 }}><button className="btn sec" disabled={busy} onClick={() => run(true)}>Проверить</button><button className="btn" disabled={busy} onClick={() => setConfirmImport(true)}>Импортировать</button></div>
     </>}
     {busy && <div className="parsing-state" role="status"><span className="spinner"/>Разбираем файл и проверяем операции…</div>}
     {rep&&<ImportReportView report={rep} onViewFeed={onViewFeed}/>}
-    <button className="btn sec" style={{margin:'20px 0'}} disabled={busy||historyBusy} onClick={async()=>{setHistoryBusy(true);setErr('');try{setHistory((await api('GET','/api/import/batches')).batches);}catch(e){setErr((e as Error).message);}finally{setHistoryBusy(false);}}}>{historyBusy?'Загружаем историю…':'История импортов'}</button>
-    {history&&<div className="group" role="group" aria-label="Сохранённые импорты">{history.map(b=><button className="row" disabled={busy||historyBusy} key={b.id} onClick={async()=>{setHistoryBusy(true);setErr('');try{const r=await api('GET','/api/import/batches/'+b.id);readGeneration.current++;setFile(null);setRep({...r,dryRun:false,saved:true,batchId:r.id,newCounterparties:[]});}catch(e){setErr((e as Error).message);}finally{setHistoryBusy(false);}}}><div className="grow"><div>{b.filename}</div><div className="sub">Добавлено {b.imported} · повторы {b.duplicates} · отклонено {b.rejected} · служебных {b.service}</div></div></button>)}{!history.length&&<div className="row muted">Сохранённых импортов нет</div>}</div>}
+    <HistoryPanel disabled={busy||confirmImport} onOpen={r=>{readGeneration.current++;setFile(null);setRep(r);}} onChanged={()=>{readGeneration.current++;setFile(null);setRep(null);}}/>
+    {confirmImport&&file&&<Sheet title="Подтвердить импорт" onClose={()=>setConfirmImport(false)}><p style={{overflowWrap:'anywhere'}}>Файл: {file.name}</p><p>Банк: {bank==='generic'?'Универсальный CSV':profiles.find(p=>p.id===bank)?.title??bank}</p><p>Операции будут добавлены в вашу историю. Проверьте файл и банк. Загрузку можно откатить через историю импортов.</p>{rep?.dryRun&&rep.mappingSnapshot===JSON.stringify(m)&&<p>Будет добавлено: {rep.imported}; повторы: {rep.duplicates}; отклонено: {rep.rejected}; служебных: {rep.service}.</p>}<div style={{display:'flex',gap:8}}><button className="btn sec" onClick={()=>setConfirmImport(false)}>Отмена</button><button className="btn" onClick={()=>run(false)}>Подтвердить импорт</button></div></Sheet>}
   </>;
 }

@@ -1,3 +1,4 @@
+import {importStatement} from './import-helper';
 import { test, expect, type Page } from '@playwright/test';
 
 const PW = 'e2e-test-password-1';
@@ -146,9 +147,9 @@ test('импорт CSV: отчёт сходится; назначение кат
   await page.getByRole('button', { name: 'Проверить' }).click();
   const rep = page.getByTestId('import-report');
   await expect(rep).toContainText('Всего строк5'); await expect(rep).toContainText('Будет добавлено4'); await expect(rep).toContainText('Отклонено1');
-  await page.getByRole('button', { name: 'Импортировать' }).click();
+  await importStatement(page);
   await expect(rep).toContainText('Добавлено4');
-  await page.getByRole('button', { name: 'Импортировать' }).click(); // повтор того же файла
+  await importStatement(page); // повтор того же файла
   await expect(rep).toContainText('Уже были (повторы)4'); await expect(rep).toContainText('Добавлено0');
   await page.getByRole('button', { name: '‹ Ещё' }).click();
   await tab(page, 'Отчёты').click();
@@ -171,9 +172,9 @@ for(const [index,bank,title,imported,rejected,total] of [
   await expect(page.getByRole('heading',{name:'Колонки'})).toHaveCount(0);
   await page.getByRole('button',{name:'Проверить',exact:true}).click();const report=page.getByTestId('import-report');
   await expect(report).toContainText(`Всего строк${total}`);await expect(report).toContainText(`Будет добавлено${imported}`);await expect(report).toContainText(`Отклонено${rejected}`);
-  await page.getByRole('button',{name:'Импортировать',exact:true}).click();await expect(report).toContainText(`Добавлено${imported}`);
+  await importStatement(page);await expect(report).toContainText(`Добавлено${imported}`);
   await page.screenshot({path:`test-results/bank-report-${test.info().project.name}-${bank}.png`});
-  await page.getByRole('button',{name:'Импортировать',exact:true}).click();await expect(report).toContainText('Добавлено0');await expect(report).toContainText(`Уже были (повторы)${imported}`);
+  await importStatement(page);await expect(report).toContainText('Добавлено0');await expect(report).toContainText(`Уже были (повторы)${imported}`);
   const count=await page.evaluate(async bank=>(await(await fetch('/api/entries')).json()).items.filter((e:any)=>e.payload.bank===bank).length,bank);expect(count).toBe(imported);
   await page.getByRole('button',{name:'Посмотреть в Ленте',exact:true}).click();await page.getByLabel('Поиск',{exact:true}).fill('TEST SHOP');
   await expect(page.getByRole('button',{name:/TEST SHOP/})).toHaveCount(index+1);
@@ -186,7 +187,7 @@ test('слишком большая выписка: понятная ошибк�
   const csv='date;amount;counterparty\n'+Array.from({length:1001},(_,i)=>`01.11.2026;-${i+1};LIMIT-TEST-1001`).join('\n');
   await page.getByRole('radio',{name:'Универсальный CSV',exact:true}).check();
   await page.getByLabel('Файл выписки').setInputFiles({name:'oversized.csv',mimeType:'text/csv',buffer:Buffer.from(csv,'utf8')});
-  await page.getByRole('button',{name:'Импортировать',exact:true}).click();
+  await importStatement(page);
   await expect(page.getByRole('alert')).toContainText('Не больше 1000 строк');
   await expect(page.getByTestId('import-report')).toHaveCount(0);
   const count=await page.evaluate(async()=>{const r=await fetch('/api/entries?q=LIMIT-TEST-1001');return (await r.json()).items.length;});
@@ -250,7 +251,8 @@ test('очередь шифруется при выходе и восстана�
   expect(dump).not.toContain('СекретныйПолучатель'); expect(JSON.parse(dump).queue).toEqual([]); expect(JSON.parse(dump).meta.length).toBe(1);
   await page.unroute('**/api/entries/batch');
   await login(page); await expect(page.getByRole('heading', { name: 'Лента' })).toBeVisible();
-  await expect(page.getByText('СекретныйПолучатель')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('Ждут отправки (1)')).toHaveCount(0,{timeout:15000});await expect(page.getByText('СекретныйПолучатель',{exact:true})).toHaveCount(1,{timeout:15000});await expect(page.getByText('СекретныйПолучатель',{exact:true})).toBeVisible();
+  expect(await page.evaluate(async()=>{const r=await(await fetch('/api/entries?q='+encodeURIComponent('СекретныйПолучатель'))).json();return r.items.filter((e:any)=>e.payload.counterparty==='СекретныйПолучатель').length;})).toBe(1);
 });
 
 test('UI 2.0: док, шторка, быстрые суммы и настоящая автокатегория', async ({page}) => {
@@ -374,8 +376,8 @@ test('Kaspi на русском: скачать пример, страницы �
   await page.getByLabel('Файл выписки').setInputFiles(path);await page.getByRole('button',{name:'Проверить',exact:true}).click();const report=page.getByTestId('import-report');
   await expect(report).toContainText('Всего строк10');await expect(report).toContainText('Будет добавлено4');await expect(report).toContainText('Отклонено2');await expect(report).toContainText('Служебные строки4');
   await page.getByRole('button',{name:'Показать служебные строки (4)',exact:true}).click();await expect(page.getByTestId('service-row-result')).toHaveCount(4);await expect(page.getByRole('region',{name:'Отклонённые операции',exact:true})).not.toContainText('SYNTHETIC SERVICE FOOTER');await expect(page.getByRole('region',{name:'Служебные строки',exact:true})).toContainText('SYNTHETIC SERVICE FOOTER');
-  await page.getByRole('button',{name:'Импортировать',exact:true}).click();await expect(report).toContainText('Добавлено4');
-  await page.getByRole('button',{name:'Импортировать',exact:true}).click();await expect(report).toContainText('Добавлено0');await expect(report).toContainText('Уже были (повторы)4');
+  await importStatement(page);await expect(report).toContainText('Добавлено4');
+  await importStatement(page);await expect(report).toContainText('Добавлено0');await expect(report).toContainText('Уже были (повторы)4');
   const rows=await page.evaluate(async()=>(await(await fetch('/api/entries?q=PAGE%20TWO%20SHOP%20CONTINUED')).json()).items);expect(rows).toHaveLength(1);expect(rows[0].payload.amountMinor).toBe(66666);
 });
 

@@ -72,6 +72,16 @@ export function stopQueue(){
   if(timer){clearTimeout(timer);timer=null;}
   status={...status,count:0,failed:0,nextAttemptAt:null};emit();
 }
+/** Do not erase history while this browser can still send queued operations. */
+export async function withEmptyQueue<T>(login:string,action:()=>Promise<T>):Promise<T>{
+ if(flushing||currentLogin!==login)throw new Error('Дождитесь окончания синхронизации и повторите');
+ const items=await listQueue(login);
+ const sealed=await metaGet('sealed:'+login);
+ if(sealed)throw new Error('Сначала восстановите и отправьте сохранённую очередь. История не очищена');
+ if(items.length||flushing||currentLogin!==login)throw new Error('Сначала отправьте операции из очереди. История не очищена');
+ stopQueue();const paused=generation;
+ try{return await action();}finally{if(generation===paused)startQueue(login);}
+}
 const onOnline = () => { if (currentLogin) flush(currentLogin); };
 const onVisible = () => { if (document.visibilityState === 'visible' && currentLogin) flush(currentLogin); };
 if (typeof window !== 'undefined') {

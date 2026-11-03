@@ -15,8 +15,8 @@ export const shiftMonth = (m: string, d: number) => { const [y, mo] = m.split('-
 
 // ---- глобальное состояние ----
 export interface Cat { id: string; name: string; type: 'expense' | 'income'; color: string }
-interface State { login: string | null; name: string; queueKey: string; cats: Cat[]; ready: boolean; version: number; financialProfile: FinancialProfileRecord | null; onboardingRequired:boolean }
-let state: State = { login: null, name: '', queueKey: '', cats: [], ready: false, version: 0, financialProfile:null, onboardingRequired:false };
+interface State { login: string | null; name: string; queueKey: string; cats: Cat[]; ready: boolean; version: number; financialProfile: FinancialProfileRecord | null; onboardingRequired:boolean;activeImports:number }
+let state: State = { login: null, name: '', queueKey: '', cats: [], ready: false, version: 0, financialProfile:null, onboardingRequired:false,activeImports:0 };
 const subs = new Set<() => void>();
 export const getState = () => state;
 export const setState = (p: Partial<State>) => { state = { ...state, ...p }; subs.forEach(f => f()); };

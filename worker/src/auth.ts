@@ -6,7 +6,7 @@ export const COOKIE = 'qs';
 const MAX_FAILS = 5;
 const LOCK_MS = 15 * 60 * 1000;
 
-export interface AuthCtx { accountId: string; sessionId: string | null; keyScope?: 'write' | 'read'; keyId?: string }
+export interface AuthCtx { accountId: string; sessionId: string | null; accountLogin?:string; keyScope?: 'write' | 'read'; keyId?: string }
 
 export async function createAccount(store: Store, login: string, displayName: string, password: string) {
   if (!/^[a-z0-9_.-]{2,32}$/.test(login)) throw new HttpError(400, 'bad_login', 'Логин: 2–32 символа a-z 0-9 _ . -');
@@ -57,12 +57,12 @@ export async function login(store: Store, loginName: string, password: string, d
 export async function sessionFromRequest(store: Store, req: Request): Promise<AuthCtx | null> {
   const tok = getCookie(req, COOKIE); if (!tok) return null;
   const s = await store.first<any>(
-    `SELECT s.id, s.account_id, s.last_seen_at, s.expires_at, s.revoked_at, a.disabled FROM sessions s
+    `SELECT s.id, s.account_id, s.last_seen_at, s.expires_at, s.revoked_at, a.disabled, a.login FROM sessions s
      JOIN accounts a ON a.id = s.account_id WHERE s.token_hash = ?`, await sha256(tok));
   const t = now();
   if (!s || s.revoked_at || s.expires_at < t || s.disabled) return null;
   if (t - s.last_seen_at > 3600_000) await store.run('UPDATE sessions SET last_seen_at = ? WHERE id = ?', t, s.id);
-  return { accountId: s.account_id, sessionId: s.id };
+  return { accountId: s.account_id, sessionId: s.id,accountLogin:s.login };
 }
 
 const KEY_RE = /^qk_(w|r)_[A-Za-z0-9_-]{30,}$/;

@@ -6,6 +6,7 @@ import * as cats from './domain/money/categories';
 import * as ent from './domain/money/entries';
 import * as imp from './domain/money/import';
 import * as cps from './domain/money/counterparties';
+import {historySummary,clearHistory,requireConfirmation} from './domain/money/history';
 import { readProfile, saveProfile } from './domain/money/financial-profile';
 import { monthlySummary, unmappedCounterparties } from './domain/money/reports';
 import { shortcutAdd, shortcutSummary } from './domain/money/shortcuts';
@@ -95,11 +96,14 @@ route('GET', '/api/import/profiles', 'session', async () => json({ profiles: Obj
 route('POST', '/api/import', 'session', async c => {
   await rateLimit(c.store, 'import:' + acc(c), 30, 10 * 60_000);
   const b = await readJson(c.req, 3 * 1024 * 1024);
+  if(b.accountLogin!==undefined&&b.accountLogin!==c.auth!.accountLogin)throw new HttpError(409,'account_changed','Аккаунт изменился. Обновите страницу перед импортом');
   return json(await imp.runImport(c.store, acc(c), b));
 });
-route('GET', '/api/import/batches', 'session', async c => json({ batches: await imp.listBatches(c.store, acc(c)) }));
+route('GET', '/api/import/batches', 'session', async c => {const batches=await imp.listBatches(c.store,acc(c),c.url.searchParams.get('before'));const last=batches[batches.length-1];return json({batches,next:batches.length===50?JSON.stringify({time:last.created_at,id:last.id}):null});});
 route('GET', '/api/import/batches/:id', 'session', async c => json(await imp.getBatch(c.store, acc(c), c.params[0])));
-route('DELETE', '/api/import/batches/:id', 'session', async c => json(await imp.undoBatch(c.store, acc(c), c.params[0])));
+route('DELETE', '/api/import/batches/:id', 'session', async c => {requireConfirmation(await readJson(c.req,512),'DELETE_DOCUMENT',c.auth!.accountLogin);return json(await imp.undoBatch(c.store,acc(c),c.params[0]));});
+route('GET','/api/history/summary','session',async c=>json(await historySummary(c.store,acc(c))));
+route('POST','/api/history/clear','session',async c=>{requireConfirmation(await readJson(c.req,512),'DELETE_ALL_HISTORY',c.auth!.accountLogin);return json(await clearHistory(c.store,acc(c)));});
 
 // ---------- «Команды» (ключи) ----------
 async function formBody(t: string, ct: string): Promise<Record<string, any>> {
