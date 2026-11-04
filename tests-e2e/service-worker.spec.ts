@@ -8,13 +8,13 @@ for(const mode of ['missing','throws','rejects'])test(`Service Worker: ${mode} �
  await context.route('**/sw.js',route=>route.fulfill({status:200,contentType:'application/javascript',body:deny+'\n'+readFileSync('web/public/sw.js','utf8')}));
  await page.goto('/');
  // Finish startup before replacing its controller or toggling the network.
- await expect(page.getByLabel('Логин',{exact:true})).toBeVisible();
+ await expect(page.getByLabel('Логин',{exact:true})).toBeVisible();await expect(page.locator('form')).not.toHaveAttribute('aria-busy','true');
  await page.evaluate(async()=>{
   await navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'});await navigator.serviceWorker.ready;
   if(!navigator.serviceWorker.controller)await new Promise<void>(resolve=>navigator.serviceWorker.addEventListener('controllerchange',()=>resolve(),{once:true}));
  });
- await page.reload();await expect(page.getByLabel('Логин',{exact:true})).toBeVisible();
+ await page.reload();await expect(page.getByLabel('Логин',{exact:true})).toBeVisible();await expect(page.locator('form')).not.toHaveAttribute('aria-busy','true');
  await context.setOffline(true);const response=await page.reload();expect(response?.status()).toBe(503);await expect(page.getByRole('button',{name:'Попробовать снова'})).toBeVisible();
- await context.setOffline(false);await page.getByRole('button',{name:'Попробовать снова'}).click();await expect(page.getByLabel('Логин',{exact:true})).toBeVisible();
+ await context.setOffline(false);await page.getByRole('button',{name:'Попробовать снова'}).click();await expect(page.getByLabel('Логин',{exact:true})).toBeVisible();await expect(page.locator('form')).not.toHaveAttribute('aria-busy','true');
  expect(errors).toEqual([]);
 });

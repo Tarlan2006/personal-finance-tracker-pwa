@@ -17,3 +17,6 @@ migrations_dir = "migrations"
 
 [vars]
 APP_ORIGIN = "https://qarjy.tarlan-b06.workers.dev"
+
+# Public picker contains only these explicitly allowed logins.
+LOGIN_ACCOUNTS = "owner,perizat,toktar"

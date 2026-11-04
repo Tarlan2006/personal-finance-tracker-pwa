@@ -1,5 +1,6 @@
 // Isolated local workerd entry point. Never used by the production wrangler.toml.
 import { deleteTransactions } from '../src/domain/money/entries';
+import { loginOptions } from '../src/auth';
 import { Store } from '../src/env';
 import { runImport, getBatch, undoBatch } from '../src/domain/money/import';
 import {clearHistory} from '../src/domain/money/history';
@@ -23,6 +24,8 @@ export default {
       const mapping={dateCol:0,amountCol:1,counterpartyCol:2};
       const csv=(n:number)=>'date;amount;name\n'+Array.from({length:n},(_,i)=>`01.11.2026;-${i+1};TEST ${i}`).join('\n');
       const other=await account('runtime-other');
+      const picker=await loginOptions(store,'runtime-other,missing');assert(picker.length===1&&picker[0].login==='runtime-other'&&Object.keys(picker[0]).sort().join(',')==='login,name','login picker: configured metadata only');
+      assert((await loginOptions(store)).length===0,'login picker: private by default');
       const legacyRows=[{line:2,status:'imported'},{line:3,status:'rejected',reason:'служебная строка или продолжение описания',preview:'SYNTHETIC FOOTER'},{line:4,status:'rejected',reason:'операция не завершена'}];
       await store.run("INSERT INTO import_batches (id,account_id,source,filename,created_at,total,imported,duplicates,rejected,report_json) VALUES ('legacy-runtime',?,'kaspi','synthetic.pdf',0,3,1,0,2,?)",other,JSON.stringify(legacyRows));
       const legacy=await getBatch(store,other,'legacy-runtime');assert(legacy.service===1&&legacy.rejected===1,'legacy report: read compatibility');

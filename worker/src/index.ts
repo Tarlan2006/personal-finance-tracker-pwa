@@ -22,6 +22,7 @@ const acc = (c: Ctx) => c.auth!.accountId;
 
 // ---------- Публичные / аккаунт ----------
 route('GET', '/api/health', 'public', async () => json({ ok: true }));
+route('GET', '/api/auth/login-options', 'public', async c => json({accounts:await auth.loginOptions(c.store,c.env.LOGIN_ACCOUNTS)}));
 route('GET', '/api/accounts', 'session', async c => json({ accounts: (await c.store.all<any>('SELECT login, display_name FROM accounts WHERE id=? AND disabled=0',acc(c))).map(a => ({ login: a.login, name: a.display_name })) }));
 route('POST', '/api/auth/login', 'public', async c => {
   const ip = c.req.headers.get('cf-connecting-ip') ?? 'local';

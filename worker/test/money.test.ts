@@ -431,3 +431,19 @@ describe('массовое удаление операций',()=>{
   expect((await call(env,'GET','/api/entries',{cookie:o})).data.items).toHaveLength(2);
  });
 });
+
+describe('публичный выбор аккаунта по разрешённому списку',()=>{
+ it('показывает только настроенные активные логины и имена, без данных аккаунтов',async()=>{
+  const {env,store,o,x}=await setup();await addAccount(store,'toktar');await store.run('UPDATE accounts SET disabled=1 WHERE login=?','other');
+  env.LOGIN_ACCOUNTS='owner,toktar,other,missing,owner';
+  for(const cookie of [undefined,o,x]){
+   const r=await call(env,'GET','/api/auth/login-options',{cookie});expect(r.status).toBe(200);expect(r.data).toEqual({accounts:[{login:'owner',name:'OWNER'},{login:'toktar',name:'TOKTAR'}]});expect(r.headers.get('cache-control')).toBe('no-store');expect(Number(r.headers.get('x-storage-ops'))).toBeLessThanOrEqual(1);
+  }
+  expect((await call(env,'GET','/api/accounts')).status).toBe(401);
+  expect((await call(env,'GET','/api/accounts',{cookie:o})).data.accounts.map((a:any)=>a.login)).toEqual(['owner']);
+ });
+ it('пустая настройка не публикует список базы; некорректные значения не попадают в SQL',async()=>{
+  const {env}=await setup();expect((await call(env,'GET','/api/auth/login-options')).data.accounts).toEqual([]);
+  env.LOGIN_ACCOUNTS=" OWNER,invalid' OR 1=1,owner ";expect((await call(env,'GET','/api/auth/login-options')).data.accounts.map((a:any)=>a.login)).toEqual(['owner']);
+ });
+});

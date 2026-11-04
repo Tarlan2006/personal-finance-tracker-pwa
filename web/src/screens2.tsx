@@ -114,7 +114,7 @@ export function More({ onImported, onViewFeed }: { onImported?: (n:number)=>void
     <div className="group">{item('import', 'Загрузить выписку')}{item('history','История и очистка')}{item('cats', 'Категории и правила')}<a className="row" href="/api/export.csv" download style={{ textDecoration: 'none' }}><span className="grow">Экспорт CSV</span><span className="sub">›</span></a></div>
     <h2>Интеграции</h2><div className="group">{item('keys', 'Быстрые команды (ключи)')}</div>
     <h2>Приложение</h2><div className="group">{item('sync', 'Синхронизация')}{item('theme', 'Тема')}</div>
-    <h2>Безопасность</h2><div className="group">{item('devices', 'Устройства')}{item('password', 'Сменить пароль')}</div>
+    <h2>Настройки</h2><div className="group">{item('devices', 'Устройства')}{item('password', 'Сменить пароль')}</div>
     <div style={{ marginTop: 24 }}>{lerr && <div className="err" role="alert">{lerr}</div>}<button className="btn danger" disabled={logout.busy} onClick={()=>logout.run(async()=>setLerr((await doLogout())??''))}>Выйти</button></div>
   </>;
 }

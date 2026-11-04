@@ -27,6 +27,15 @@ export async function listLogins(store: Store) {
   return store.all<{ login: string; display_name: string }>('SELECT login, display_name FROM accounts WHERE disabled = 0 ORDER BY login');
 }
 
+/** Public login picker: only explicitly configured, enabled accounts; no account IDs. */
+export async function loginOptions(store: Store, configured?: string) {
+  const logins=[...new Set((configured??'').split(',').map(s=>s.trim().toLowerCase()).filter(s=>/^[a-z0-9_.-]{2,32}$/.test(s)))].slice(0,30);
+  if(!logins.length)return [];
+  const rows=await store.all<{login:string;display_name:string}>(
+    'SELECT login, display_name FROM accounts WHERE disabled=0 AND login IN (SELECT value FROM json_each(?))',JSON.stringify(logins));
+  return logins.flatMap(login=>{const row=rows.find(r=>r.login===login);return row?[{login:row.login,name:row.display_name}]:[];});
+}
+
 export async function login(store: Store, loginName: string, password: string, device: string) {
   const acc = await store.first<any>('SELECT * FROM accounts WHERE login = ?', String(loginName));
   const t = now();

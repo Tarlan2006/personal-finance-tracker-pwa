@@ -26,7 +26,7 @@ const assets = {
     return new Response(body, { headers: { 'Content-Type': TYPES[ext] ?? 'application/octet-stream' } });
   },
 } as unknown as Fetcher;
-const env: Env = { DB: local.db, ASSETS: assets };
+const env: Env = { DB: local.db, ASSETS: assets, LOGIN_ACCOUNTS:process.env.LOGIN_ACCOUNTS };
 
 for (const seed of [process.env.SEED_ACCOUNT,...(process.env.SEED_ACCOUNTS??'').split(',')].filter(Boolean)) { // local tests only
   const [login, password] = seed!.split(':');

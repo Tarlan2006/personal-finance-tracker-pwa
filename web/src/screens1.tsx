@@ -10,6 +10,16 @@ import { Field, Sheet, bump, dayLabel, fmt, getState, loadCats, setState, todayS
 export function Login() {
   const submitting=useRef(false);
   const [login, setLogin] = useState(''); const [pw, setPw] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+  const [accounts,setAccounts]=useState<Array<{login:string;name:string}>>([]),[manual,setManual]=useState(false);
+  const [loadingAccounts,setLoadingAccounts]=useState(true),[accountsError,setAccountsError]=useState('');
+  const optionsGeneration=useRef(0);
+  async function loadAccounts(){
+    const current=++optionsGeneration.current;setLoadingAccounts(true);setAccountsError('');
+    try{const r=await api('GET','/api/auth/login-options');if(current===optionsGeneration.current)setAccounts(r.accounts);}
+    catch{if(current===optionsGeneration.current)setAccountsError('Не удалось загрузить список аккаунтов. Повторите или введите логин вручную.');}
+    finally{if(current===optionsGeneration.current)setLoadingAccounts(false);}
+  }
+  useEffect(()=>{void loadAccounts();return()=>{optionsGeneration.current++;};},[]);
   async function submit(e: React.FormEvent) {
     e.preventDefault();if(submitting.current)return;submitting.current=true;setBusy(true);setErr('');
     try {
@@ -22,11 +32,16 @@ export function Login() {
   }
   return <div className="app" style={{ paddingBottom: 24 }}>
     <h1 style={{ marginTop: 56 }}>Қаржы</h1><p className="muted" style={{ marginTop: -8 }}>Войдите в свой аккаунт</p>
-    <form onSubmit={submit}>
-      <Field label="Логин"><input aria-label="Логин" autoComplete="username" autoCapitalize="none" spellCheck={false} maxLength={32} required value={login} onChange={e=>setLogin(e.target.value)} /></Field>
-      <Field label="Пароль"><input aria-label="Пароль" type="password" autoComplete="current-password" value={pw} onChange={e => setPw(e.target.value)} /></Field>
+    <form onSubmit={submit} aria-busy={loadingAccounts||busy||undefined}>
+      {!manual&&accounts.length>0?<Field label="Аккаунт"><select aria-label="Аккаунт" autoComplete="username" required disabled={busy||loadingAccounts} value={login} onChange={e=>{setLogin(e.target.value);setPw('');setErr('');}}>
+        <option value="">Выберите аккаунт</option>{accounts.map(a=><option key={a.login} value={a.login}>{a.name.toLowerCase()===a.login.toLowerCase()?a.name:`${a.name} (${a.login})`}</option>)}
+      </select></Field>:<Field label="Логин"><input aria-label="Логин" autoComplete="username" autoCapitalize="none" spellCheck={false} maxLength={32} required disabled={busy||loadingAccounts} value={login} onChange={e=>setLogin(e.target.value)} /></Field>}
+      {loadingAccounts&&<p className="sub" role="status">Загружаем аккаунты…</p>}
+      {accountsError&&<div className="err" role="alert">{accountsError}<button type="button" className="btn small sec" disabled={busy||loadingAccounts} onClick={()=>void loadAccounts()}>Повторить загрузку аккаунтов</button></div>}
+      {accounts.length>0&&<button type="button" className="text-action" disabled={busy||loadingAccounts} onClick={()=>{setManual(v=>!v);setLogin('');setPw('');setErr('');}}>{manual?'Выбрать из списка':'Ввести логин вручную'}</button>}
+      <Field label="Пароль"><input disabled={busy} aria-label="Пароль" type="password" autoComplete="current-password" value={pw} onChange={e => setPw(e.target.value)} /></Field>
       {err && <div className="err" role="alert">{err}</div>}
-      <button className="btn" disabled={busy || !login || !pw}>{busy ? 'Входим…' : 'Войти'}</button>
+      <button className="btn" disabled={busy || loadingAccounts || !login || !pw}>{busy ? 'Входим…' : 'Войти'}</button>
     </form>
   </div>;
 }

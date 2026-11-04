@@ -2,6 +2,7 @@ export interface Env {
   DB: D1Database;
   ASSETS?: Fetcher;
   APP_ORIGIN?: string;
+  LOGIN_ACCOUNTS?: string;
 }
 
 /** Обёртка над D1: считает обращения к хранилищу за запрос. */
