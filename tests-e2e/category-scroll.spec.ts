@@ -15,6 +15,12 @@ async function holdSummary(page:Page){
 }
 async function closeEnough(page:Page,n:number,top:number){await expect.poll(async()=>Math.abs((await row(page,n).boundingBox())!.y-top)).toBeLessThan(4);}
 
+test('отчёт: повтор после ошибки сохраняет место строки и блокируется до ответа',async({page})=>{
+ await prepare(page);const target=row(page,40);await target.scrollIntoViewIfNeeded();await page.evaluate(()=>scrollBy(0,-80));const top=(await target.boundingBox())!.y;
+ await page.route('**/api/reports/summary?month=*',route=>route.abort(),{times:1});await target.click();await page.getByRole('dialog').getByRole('button',{name:'Магазины',exact:true}).click();await expect(page.getByRole('alert')).toContainText('Нет связи');await closeEnough(page,40,top);
+ const gate=await holdSummary(page);const retry=page.getByRole('button',{name:'Повторить загрузку отчёта',exact:true});await retry.evaluate(el=>{(el as HTMLButtonElement).click();(el as HTMLButtonElement).click();});await gate.requested;await expect(retry).toBeDisabled();await closeEnough(page,40,top);gate.release();await expect(page.getByRole('alert')).toHaveCount(0);await expect(target).toContainText('Магазины');await closeEnough(page,40,top);
+});
+
 test('категория: длинный отчёт сохраняет строки, фокус и место при добавлении/снятии привязки',async({page})=>{
  await prepare(page);const target=row(page,40);await target.scrollIntoViewIfNeeded();await page.evaluate(()=>scrollBy(0,-80));const top=(await target.boundingBox())!.y;expect(await page.evaluate(()=>scrollY)).toBeGreaterThan(1000);await target.evaluate(el=>el.setAttribute('data-scroll-marker','kept'));
  const navigation=await page.evaluate(()=>performance.getEntriesByType('navigation').length);let gate=await holdSummary(page);

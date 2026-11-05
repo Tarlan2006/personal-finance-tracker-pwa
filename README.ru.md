@@ -16,6 +16,7 @@ npm run build        # клиент в web/dist
 npm run typecheck
 npm test             # Vitest: сервер/клиент, реальный SQLite
 npm run test:e2e     # Playwright, эмуляция iPhone, тёмная и светлая тема
+npm run test:ux      # UX: WebKit с размерами iPhone 11–14 + ноутбук, две темы
 npx playwright install webkit # один раз: тестовый движок WebKit
 npm run test:safari  # WebKit, две мобильные темы; не физический Safari iOS
 npm run verify:safari -- https://qarjy.tarlan-b06.workers.dev # публичные проверки без входа/записи
@@ -23,6 +24,9 @@ npm run scan-secrets
 npm run ops-report   # обращения к хранилищу на типичный сеанс
 npm run dev          # локальный сервер http://localhost:8787 (память; DB_FILE=файл.sqlite для файла)
 ```
+
+Аудит по 15 критериям удобства, найденные проблемы, исправления и границы эмуляции: [docs/UX_AUDIT_15.ru.md](docs/UX_AUDIT_15.ru.md). Физические iPhone 11/12/13/14 этим прогоном не заменяются.
+
 Для `test:e2e` в среде без стандартной установки браузеров можно указать `CHROMIUM_PATH` (путь к chromium). Установленный Playwright: `npx playwright install chromium`.
 
 ## Локальный запуск с аккаунтом

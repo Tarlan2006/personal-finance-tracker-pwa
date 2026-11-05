@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { lockScroll } from './scroll-lock';
 import { api } from './api';
 import type { FinancialProfileRecord } from '../../shared/financial-profile';
@@ -51,6 +51,28 @@ export function Sheet({ title, onClose, children, busy=false }: { title: string;
   const restore=useRef(document.activeElement as HTMLElement|null);
   const [layer,setLayer]=useState(0);
   const ref=useRef<HTMLElement>(null), close=useRef(onClose); close.current=()=>{if(!busy)onClose();};
+  useLayoutEffect(()=>{
+    const element=ref.current!,viewport=window.visualViewport;
+    if(!viewport)return;
+    let frame=0;
+    const update=()=>{
+      // iOS can shrink/pan only the visual viewport when its keyboard appears.
+      // Ignore pinch zoom: the browser owns panning the magnified page.
+      const zoomed=viewport.scale>1.05;
+      element.style.bottom=zoomed?'':`${Math.max(0,innerHeight-viewport.offsetTop-viewport.height)}px`;
+      element.style.maxHeight=zoomed?'':`calc(${Math.max(0,viewport.height)}px - var(--sat) - 12px)`;
+      cancelAnimationFrame(frame);frame=requestAnimationFrame(()=>{
+        const field=document.activeElement;
+        if(!zoomed&&sheetStack.at(-1)===element&&field instanceof HTMLElement&&element.contains(field)&&field.matches('input,textarea,select')){
+          const bounds=field.getBoundingClientRect(),sheet=element.getBoundingClientRect();
+          if(bounds.bottom>sheet.bottom-12)element.scrollTop+=bounds.bottom-sheet.bottom+12;
+          else if(bounds.top<sheet.top+12)element.scrollTop+=bounds.top-sheet.top-12;
+        }
+      });
+    };
+    update();viewport.addEventListener('resize',update);viewport.addEventListener('scroll',update);element.addEventListener('focusin',update);
+    return()=>{cancelAnimationFrame(frame);viewport.removeEventListener('resize',update);viewport.removeEventListener('scroll',update);element.removeEventListener('focusin',update);};
+  },[]);
   useEffect(()=>{
     const previous=restore.current, unlock=lockScroll(),element=ref.current!;setLayer(sheetStack.length);sheetStack.push(element);
     const focus=()=>Array.from(ref.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),a[href],[tabindex="0"]')??[]).filter(el=>el.getClientRects().length);

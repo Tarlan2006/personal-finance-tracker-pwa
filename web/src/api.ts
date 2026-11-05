@@ -20,12 +20,21 @@ async function doFetch<T>(method: string, path: string, body?: unknown): Promise
     res = await fetch(path, { method, headers: body !== undefined ? { 'Content-Type': 'application/json' } : method === 'POST' ? { 'Content-Type': 'application/json' } : {}, body: body !== undefined ? JSON.stringify(body) : method === 'POST' ? '{}' : undefined, credentials: 'same-origin', cache: 'no-store' });
   } catch { throw new ApiError(0, 'network', 'Нет связи с сервером'); }
   if (res.ok && method !== 'GET') inflight.clear(); // Reads started before a mutation must not satisfy a later refresh.
-  if (res.ok) return (res.headers.get('content-type')?.includes('json') ? res.json() : res.text()) as Promise<T>;
-  let data: any = {}; try { data = await res.json(); } catch {}
+  if (res.ok) {
+    try { return await (res.headers.get('content-type')?.includes('json') ? res.json() : res.text()) as T; }
+    catch { throw new ApiError(502, 'bad_response', 'Не удалось прочитать ответ сервера. Обновите экран и повторите действие.'); }
+  }
+  let data: any = {}; try { const parsed = await res.json(); if(parsed && typeof parsed === 'object')data = parsed; } catch {}
   const retry = Number(res.headers.get('retry-after') ?? 0);
   if (res.status === 429 && retry&&generation===sessionGeneration) pausedUntil = Date.now() + retry * 1000;
   if (res.status === 401 && !path.startsWith('/api/auth/login')&&generation===sessionGeneration){sessionGeneration++;inflight.clear();onUnauthorized();}
-  throw new ApiError(res.status, data.error ?? 'error', data.message ?? `Ошибка ${res.status}`, retry);
+  // Validation messages are actionable; infrastructure responses must not expose internals.
+  const message = res.status >= 500 ? 'Сервис временно недоступен. Повторите действие чуть позже.'
+    : typeof data.message === 'string' && data.message.trim() ? data.message
+    : res.status === 429 ? 'Слишком много запросов. Подождите немного и повторите.'
+    : res.status === 401 ? 'Войдите в аккаунт снова.'
+    : 'Не удалось выполнить действие. Обновите экран и попробуйте снова.';
+  throw new ApiError(res.status, typeof data.error === 'string' ? data.error : 'error', message, retry);
 }
 /** GET-запросы с одинаковым путём, идущие одновременно, объединяются в один сетевой вызов. */
 export function api<T = any>(method: string, path: string, body?: unknown): Promise<T> {

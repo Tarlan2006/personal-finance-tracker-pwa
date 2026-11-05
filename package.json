@@ -9,6 +9,7 @@
     "typecheck": "tsc -p worker/tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test --project=iPhone15Pro-dark && playwright test --project=iPhone17Pro-light",
+    "test:ux": "playwright test --config=playwright.ux.config.ts",
     "test:safari": "playwright test --project=webkit-iPhone-dark && playwright test --project=webkit-iPhone-light",
     "migrate:local": "wrangler d1 migrations apply qarjy --local",
     "migrate:remote": "wrangler d1 migrations apply qarjy --remote",

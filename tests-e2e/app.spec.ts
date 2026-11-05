@@ -283,7 +283,7 @@ test('UI 2.0: док, шторка, быстрые суммы и настоящ�
   await expect(page.getByRole('button',{name:/UI2 Synthetic Shop 3.500,25/})).toBeVisible();
   const entry=await page.evaluate(async()=>{const r=await(await fetch('/api/entries?q=UI2%20Synthetic%20Shop')).json();return r.items[0];});
   expect(entry.payload.amountMinor).toBe(350025);expect(entry.payload.categoryId).toBeNull();expect(entry.effectiveCategoryId).toBeTruthy();
-  await page.getByRole('button',{name:'✨ Авто-правила',exact:true}).click();await expect(page.getByRole('button',{name:/UI2 Synthetic Shop 3.500,25/})).toBeVisible();
+  await page.getByRole('button',{name:'Авто-правила',exact:true}).click();await expect(page.getByRole('button',{name:/UI2 Synthetic Shop 3.500,25/})).toBeVisible();
   await page.getByRole('button',{name:'Все',exact:true}).click();await page.locator('.island-toast').waitFor({state:'hidden'});
   await page.screenshot({path:`test-results/redesign-feed-${test.info().project.name}.png`});
   await fab.click();await sheet.getByRole('button',{name:'Сохранить',exact:true}).focus();await page.keyboard.press('Tab');

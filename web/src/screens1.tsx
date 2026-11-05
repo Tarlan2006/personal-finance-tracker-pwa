@@ -157,7 +157,7 @@ export function Feed({ onImport }: {onImport:()=>void}) {
     </Sheet>}
     {queueStatus.lastResult==='Локальное хранилище недоступно'&&<div className="banner" role="alert">Локальное хранилище недоступно. Новые операции нельзя сохранить на этом устройстве.</div>}
     <div className="spotlight">{Icons.search}<input disabled={deleting} aria-label="Поиск" type="search" placeholder="Поиск по получателю и заметке" value={q} onChange={e => setQ(e.target.value)}  /></div>
-    <div className="filter-pills" aria-label="Фильтры операций">{([['all','Все'],['out','Расходы'],['in','Доходы'],['auto','✨ Авто-правила']] as const).map(([key,label])=><button disabled={deleting} key={key} aria-pressed={filter===key} className={filter===key?'active':''} onClick={()=>setFilter(key)}>{label}</button>)}</div>
+    <div className="filter-pills" aria-label="Фильтры операций">{([['all','Все'],['out','Расходы'],['in','Доходы'],['auto','Авто-правила']] as const).map(([key,label])=><button disabled={deleting} key={key} aria-pressed={filter===key} className={filter===key?'active':''} onClick={()=>setFilter(key)}>{label}</button>)}</div>
     <section className="balance-card" aria-label="Сводка за месяц"><div className="balance-label">Баланс · {monthLabel(thisMonth()).replace(/ г\.$/,'')}</div><div className="balance-value" style={{color:summary?.net?summary.net>0?'var(--green)':'var(--red)':undefined}}>{summary ? fmt(summary.net) : '— ₸'}</div><div className="balance-split"><div><span><i className="flow-dot in"/>Доходы</span><strong>{summary?fmt(summary.in):'—'}</strong></div><div><span><i className="flow-dot out"/>Расходы</span><strong>{summary?fmt(summary.out):'—'}</strong></div></div>{pending.length>0&&<small className="muted">Без ожидающих отправки</small>}</section>
     {err && <div className="banner" role="alert">{err}</div>}
     {pendingAction.error&&<div className="err" role="alert">{pendingAction.error}</div>}
@@ -172,7 +172,7 @@ export function Feed({ onImport }: {onImport:()=>void}) {
       const c = cm.get(e.effectiveCategoryId ?? ''); const p = e.payload;
       return <EntryCard key={e.id} id={e.id} selecting={selecting} selected={selected.has(e.id)} disabled={deleting||selecting&&selected.size>=1000&&!selected.has(e.id)} onSelect={()=>toggle(e.id)} onOpen={()=>setEdit(e)} label={`${p.counterparty || 'Без получателя'} ${fmt(p.amountMinor)}`}>
         <span className="merchant-icon" style={{color:c?.color??'var(--accent)',background:c?.color?c.color+'20':undefined}} aria-hidden="true">{p.direction==='in'?'↙':(p.counterparty||'₸').slice(0,1).toUpperCase()}</span>
-        <div className="grow"><div className="ell">{p.counterparty || p.note || 'Без получателя'}</div><div className="sub ell">{c ? c.name : <span className="chip warn">без категории</span>}{!p.categoryId&&c&&<span className="auto-mark" title="Категория по привязке или правилу"> ✨</span>}{p.note && p.counterparty ? ' · ' + p.note : ''}</div></div>
+        <div className="grow"><div className="ell">{p.counterparty || p.note || 'Без получателя'}</div><div className="sub ell">{c ? c.name : <span className="chip warn">без категории</span>}{!p.categoryId&&c&&<span className="auto-mark" title="Категория по привязке или правилу"> · авто</span>}{p.note && p.counterparty ? ' · ' + p.note : ''}</div></div>
         <span className={'amt ' + p.direction}>{p.direction === 'in' ? '+' : '−'}{fmt(p.amountMinor)}</span>
       </EntryCard>;
     })}</div></section>)}
@@ -243,7 +243,7 @@ export function Add({ onDone, onBusyChange }: { onDone: () => void; onBusyChange
     <div className="quick-amounts">{[100000,250000,500000].map(n=><button key={n} type="button" onClick={()=>increase(n)}>+{fmt(n)}</button>)}</div>
     <div className="form-group">
       <Field label={dir==='out'?'Кому / где':'От кого'}><input aria-label="Получатель" list="cps" value={cp} onChange={e=>setCp(e.target.value)} placeholder="Например: ИП Мирас" maxLength={120}/><datalist id="cps">{counterparties.slice(0,200).map(c=><option key={c.name_norm} value={c.display}/>)}</datalist></Field>
-      <Field label="Категория"><div className="category-control">{!cat&&auto&&<span className="auto-badge" data-testid="auto-category">✨ Авто · {auto.name}</span>}<select aria-label="Категория" value={cat} onChange={e=>setCat(e.target.value)}><option value="">{auto?`Автоматически: ${auto.name}`:'Автоматически (по получателю)'}</option>{opts.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div></Field>
+      <Field label="Категория"><div className="category-control">{!cat&&auto&&<span className="auto-badge" data-testid="auto-category">Авто · {auto.name}</span>}<select aria-label="Категория" value={cat} onChange={e=>setCat(e.target.value)}><option value="">{auto?`Автоматически: ${auto.name}`:'Автоматически (по получателю)'}</option>{opts.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div></Field>
       <Field label="Дата"><input aria-label="Дата" type="date" required value={date} onChange={e=>setDate(e.target.value)}/></Field>
       <Field label="Заметка"><input aria-label="Заметка" value={note} placeholder="Необязательно" maxLength={MAX_NOTE_LENGTH} onChange={e=>setNote(e.target.value)}/></Field>
     </div>

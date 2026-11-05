@@ -1,9 +1,9 @@
 :root {
-  --bg: #f2f2f7; --bg2: #ffffff; --bg3: #e5e5ea; --fg: #000; --fg2: #6c6c70; --sep: rgba(60,60,67,.18);
-  --accent: #0a84ff; --green: #1f9d45; --red: #d70015; --orange: #c93400;
+  --bg: #f2f2f7; --bg2: #ffffff; --bg3: #e5e5ea; --fg: #000; --fg2: #626267; --sep: rgba(60,60,67,.18);
+  --accent: #0062cc; --on-accent: #fff; --green: #136c31; --red: #bd0015; --orange: #b82e00;
   --radius: 22px; --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
   --sat: env(safe-area-inset-top); --sab: env(safe-area-inset-bottom); --sal: env(safe-area-inset-left); --sar: env(safe-area-inset-right);
   --tab-h: 58px; --ease: cubic-bezier(.2,.8,.2,1); color-scheme: light;
 }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#000; --bg2:#1c1c1e; --bg3:#2c2c2e; --fg:#fff; --fg2:#98989f; --sep:rgba(84,84,88,.55); --green:#30d158; --red:#ff453a; --orange:#ff9f0a; color-scheme: dark; } }
-:root[data-theme="dark"] { --bg:#000; --bg2:#1c1c1e; --bg3:#2c2c2e; --fg:#fff; --fg2:#98989f; --sep:rgba(84,84,88,.55); --green:#30d158; --red:#ff453a; --orange:#ff9f0a; color-scheme: dark; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#000; --bg2:#1c1c1e; --bg3:#2c2c2e; --fg:#fff; --fg2:#aaaab1; --sep:rgba(84,84,88,.55); --accent:#409cff; --on-accent:#000; --green:#30d158; --red:#ff6961; --orange:#ff9f0a; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg:#000; --bg2:#1c1c1e; --bg3:#2c2c2e; --fg:#fff; --fg2:#aaaab1; --sep:rgba(84,84,88,.55); --accent:#409cff; --on-accent:#000; --green:#30d158; --red:#ff6961; --orange:#ff9f0a; color-scheme: dark; }

@@ -25,11 +25,12 @@ export function Reports() {
   const { cats, version } = useAppState();
   const [month, setMonth] = useState(thisMonth()); const [dir, setDir] = useState<'out' | 'in'>('out'); const [s, setS] = useState<Summary | null>(null); const [err, setErr] = useState('');
   const [pick, setPick] = useState<Summary['byCounterparty']['out'][number] | null>(null);
+  const [reload,setReload]=useState(0),[loading,setLoading]=useState(true);
   const root=useRef<HTMLDivElement>(null),shown=useRef(s),shownDir=useRef(dir);
   shown.current=s;shownDir.current=dir;
   const anchor=useRef<{name:string;top:number;month:string;dir:'out'|'in'}|null>(null);
   useEffect(() => {
-    let active=true;
+    let active=true;setLoading(true);
     // Keep the same month's mounted rows while bindings and totals refresh.
     if(shown.current?.month!==month){setS(null);setErr('');anchor.current=null;}
     const remember=()=>{
@@ -37,9 +38,9 @@ export function Reports() {
       const row=Array.from(root.current?.querySelectorAll<HTMLElement>('[data-counterparty]')??[]).find(el=>{const r=el.getBoundingClientRect();return r.bottom>0&&r.top<innerHeight;});
       if(row)anchor.current={name:row.dataset.counterparty!,top:row.getBoundingClientRect().top,month,dir:shownDir.current};
     };
-    api('GET','/api/reports/summary?month='+month).then(r=>{if(active){remember();setS(r);setErr('');}}).catch(e=>{if(active){remember();setErr(e.message);}});
+    api('GET','/api/reports/summary?month='+month).then(r=>{if(active){remember();setS(r);setErr('');}}).catch(e=>{if(active){remember();setErr(e.message);}}).finally(()=>{if(active)setLoading(false);});
     return ()=>{active=false;};
-  }, [month, version]);
+  }, [month, version, reload]);
   useLayoutEffect(()=>{
     const saved=anchor.current;anchor.current=null;
     if(!saved||saved.month!==month||saved.dir!==dir)return;
@@ -54,7 +55,8 @@ export function Reports() {
       <strong>{monthLabel(month).replace(/^./, c => c.toUpperCase()).replace(/ г\.$/, '')}</strong>
       <button className="btn small sec" aria-label="Следующий месяц" onClick={() => setMonth(shiftMonth(month, 1))} disabled={month >= thisMonth()}>›</button>
     </div>
-    {err && <div className="banner" role="alert">{err}</div>}
+    {err && <div className="banner" role="alert">{err}<button className="btn small sec" disabled={loading} onClick={()=>{setLoading(true);setReload(n=>n+1);}}>Повторить загрузку отчёта</button></div>}
+    {!s&&!err&&<p className="muted" role="status">Загружаем отчёт…</p>}
     <div className="seg"><button className={dir === 'out' ? 'on' : ''} onClick={() => setDir('out')}>Расходы</button><button className={dir === 'in' ? 'on' : ''} onClick={() => setDir('in')}>Доходы</button></div>
     {s && <>
       <div className="group" style={{ padding: 16, marginBottom: 8 }}>
@@ -266,7 +268,8 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
   const sel = (label: string, key: 'date' | 'amount' | 'cp' | 'note' | 'debit' | 'credit' | 'dirCol', optional = false) => <Field label={label}><select disabled={busy} aria-label={label} value={m[key]} onChange={e => setM({ ...m, [key]: Number(e.target.value) })}>{optional && <option value={-1}>— нет —</option>}{file!.header.map((h, i) => <option key={i} value={i}>{h || `Колонка ${i + 1}`}</option>)}</select></Field>;
   return <>
     <div className="screen-kicker">ИМПОРТ ОПЕРАЦИЙ</div><h1>Выписка</h1><div className="import-hero" aria-hidden="true">↥</div>
-    <p className="muted">Каждая строка файла попадёт в отчёт: добавлена, распознана как повтор, отклонена с причиной или учтена как служебный текст. Halyk, Kaspi и Freedom: PDF с текстовым слоем. Для других файлов — универсальный CSV. За один раз — до 1000 строк (у Freedom многострочная операция считается одной строкой). Большую выписку разделите по датам, не разбивая операции одного дня.</p>
+    <p className="muted">Выберите банк и выписку в PDF. Для других файлов доступен CSV. За один раз — до 1000 строк.</p>
+    <details className="import-help"><summary>Форматы и ограничения</summary><p className="muted">Каждая строка попадёт в отчёт: добавлена, распознана как повтор, отклонена с причиной или учтена как служебный текст. Halyk, Kaspi и Freedom: PDF с текстовым слоем. У Freedom многострочная операция считается одной строкой. Большую выписку разделите по датам, не разбивая операции одного дня.</p></details>
     <fieldset className="bank-fieldset" aria-label="Банк" disabled={busy}>
       <legend>Выберите банк · PDF</legend>
       <div className="bank-cards">{['halyk','kaspi','freedom'].map(id=>{

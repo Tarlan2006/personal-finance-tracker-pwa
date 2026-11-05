@@ -31,3 +31,15 @@ it('запоздалый 429 старой сессии не останавлив
  const {api}=await import('../src/api');const old=api('POST','/api/import',{}),rejected=expect(old).rejects.toMatchObject({status:429});
  await api('POST','/api/auth/login',{});reply(Response.json({message:'limit'},{status:429,headers:{'retry-after':'60'}}));await rejected;await expect(api('GET','/api/me')).resolves.toMatchObject({ok:true});
 });
+it('ошибки инфраструктуры и повреждённый JSON не выводят технические подробности',async()=>{
+ vi.stubGlobal('fetch',vi.fn()
+  .mockResolvedValueOnce(Response.json({error:'internal',message:'D1_ERROR: SELECT private_table failed'},{status:503}))
+  .mockResolvedValueOnce(new Response('<html>upstream failed</html>',{status:502}))
+  .mockResolvedValueOnce(Response.json(null,{status:502}))
+  .mockResolvedValueOnce(new Response('{broken',{headers:{'content-type':'application/json'}}))
+  .mockResolvedValueOnce(Response.json({error:'bad_amount',message:'Введите положительную сумму'},{status:400})));
+ const {api}=await import('../src/api');
+ for(const path of ['/api/report-1','/api/report-2','/api/report-null'])await expect(api('GET',path)).rejects.toMatchObject({message:'Сервис временно недоступен. Повторите действие чуть позже.'});
+ await expect(api('GET','/api/report-3')).rejects.toMatchObject({status:502,code:'bad_response',message:'Не удалось прочитать ответ сервера. Обновите экран и повторите действие.'});
+ await expect(api('POST','/api/entries',{})).rejects.toMatchObject({status:400,message:'Введите положительную сумму'});
+});
