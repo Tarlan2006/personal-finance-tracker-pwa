@@ -46,6 +46,8 @@ h1{font-size:32px;letter-spacing:-1px;font-weight:750;margin:8px 0 22px}
 .screen-kicker{font-size:12px;letter-spacing:1.5px;font-weight:650;color:var(--fg2)}
 .feed-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}
 .feed-heading h1{margin-bottom:20px}
+.feed-heading.with-selection h1{margin-bottom:12px}
+.feed-select{margin-bottom:12px}
 .header-import{width:44px;height:44px;flex:none;border-radius:50%;border:1px solid var(--sep);background:var(--bg2);color:var(--accent);display:grid;place-items:center;cursor:pointer}
 .header-import svg{width:21px;height:21px}
 .spotlight{display:flex;align-items:center;gap:8px;background:var(--bg2);border-radius:14px;padding:0 12px;color:var(--fg2);margin-bottom:12px}

@@ -161,13 +161,16 @@ test('импорт CSV: отчёт сходится; назначение кат
 
 for(const [index,bank,title,imported,rejected,total] of [
   [0,'halyk','Halyk',2,0,4],[1,'kaspi','Kaspi',2,1,5],[2,'freedom','Freedom',4,3,7]
-] as const) test(`${title} PDF: скачать пример → загрузить → отчёт → операции`,async({page})=>{
+] as const) test(`${title} PDF: ${bank==='kaspi'?'синтетический файл':'скачать пример'} → загрузить → отчёт → операции`,async({page})=>{
   await loggedIn(page);await tab(page,'Выписка').click();
   for(const name of ['Halyk PDF','Kaspi PDF','Freedom PDF'])await expect(page.getByRole('radio',{name,exact:true})).toBeVisible();
   await page.getByRole('radio',{name:title+' PDF',exact:true}).check();
-  const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('link',{name:new RegExp('Скачать пример '+title+' PDF')}).click()]);
-  expect(download.suggestedFilename()).toBe(bank+'.pdf');
-  const fixture=`test-results/upload-${test.info().project.name}-${bank}.pdf`;await download.saveAs(fixture);
+  let fixture='web/public/examples/kaspi.pdf';
+  if(bank!=='kaspi'){
+    const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('link',{name:new RegExp('Скачать пример '+title+' PDF')}).click()]);
+    expect(download.suggestedFilename()).toBe(bank+'.pdf');
+    fixture=`test-results/upload-${test.info().project.name}-${bank}.pdf`;await download.saveAs(fixture);
+  }
   await page.getByLabel('Файл выписки',{exact:true}).setInputFiles(fixture);
   await expect(page.getByRole('heading',{name:'Колонки'})).toHaveCount(0);
   await page.getByRole('button',{name:'Проверить',exact:true}).click();const report=page.getByTestId('import-report');
@@ -370,10 +373,9 @@ test('прокрутка страницы и шторки восстанавли
   await cdp.detach();
 });
 
-test('Kaspi на русском: скачать пример, страницы без шапки, повтор',async({page})=>{
+test('Kaspi на русском: синтетический файл, страницы без шапки, повтор',async({page})=>{
   await loggedIn(page);await tab(page,'Выписка').click();await page.getByRole('radio',{name:'Kaspi PDF',exact:true}).check();
-  const downloaded=page.waitForEvent('download');await page.getByRole('link',{name:'Пример Kaspi на русском · вымышленные данные',exact:true}).click();const file=await downloaded;const path=test.info().outputPath('kaspi-russian.pdf');await file.saveAs(path);
-  await page.getByLabel('Файл выписки').setInputFiles(path);await page.getByRole('button',{name:'Проверить',exact:true}).click();const report=page.getByTestId('import-report');
+  await page.getByLabel('Файл выписки').setInputFiles('web/public/examples/kaspi-russian.pdf');await page.getByRole('button',{name:'Проверить',exact:true}).click();const report=page.getByTestId('import-report');
   await expect(report).toContainText('Всего строк10');await expect(report).toContainText('Будет добавлено4');await expect(report).toContainText('Отклонено2');await expect(report).toContainText('Служебные строки4');
   await page.getByRole('button',{name:'Показать служебные строки (4)',exact:true}).click();await expect(page.getByTestId('service-row-result')).toHaveCount(4);await expect(page.getByRole('region',{name:'Отклонённые операции',exact:true})).not.toContainText('SYNTHETIC SERVICE FOOTER');await expect(page.getByRole('region',{name:'Служебные строки',exact:true})).toContainText('SYNTHETIC SERVICE FOOTER');
   await importStatement(page);await expect(report).toContainText('Добавлено4');
