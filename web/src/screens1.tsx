@@ -140,7 +140,7 @@ export function Feed({ onImport }: {onImport:()=>void}) {
     finally{deletingRef.current=false;setDeleting(false);setLoading(false);}
   }
   useEffect(()=>{const t=setTimeout(()=>load(false),q?250:0);return ()=>{clearTimeout(t);generation.current++;};},[q,version,filter,queueStatus.count]);
-  useEffect(() => { let active=true;if (login) listQueue(login).then(r=>{if(active)setPending(r);}).catch(()=>{if(active)setPending([]);});return ()=>{active=false;}; }, [login, version, items, queueStatus.count, queueStatus.failed, queueStatus.lastResult]);
+  useEffect(() => { let active=true;if (login) listQueue(login).then(r=>{if(active)setPending(r);}).catch(()=>{if(active)setPending(previous=>previous.filter(item=>item.login===login));});return ()=>{active=false;}; }, [login, version, items, queueStatus.count, queueStatus.failed, queueStatus.lastResult]);
   const groups = useMemo(() => { const g = new Map<string, Entry[]>(); for (const e of items) { if(filter==='auto' ? !!e.payload.categoryId || !e.effectiveCategoryId : filter!=='all' && e.payload.direction!==filter)continue; const k = dayLabel(e.occurredAt); (g.get(k) ?? g.set(k, []).get(k)!).push(e); } return [...g]; }, [items,filter]);
   return <div ref={root} style={{overflowAnchor:'none',minHeight:refreshHeight}}>
     <header className={'feed-heading'+(items.length?' with-selection':'')}><div><div className="screen-kicker">QARJY · ВАШИ ФИНАНСЫ</div><h1>Лента</h1></div><button className="header-import" aria-label="Загрузить выписку" onClick={onImport}>{Icons.upload}</button></header>

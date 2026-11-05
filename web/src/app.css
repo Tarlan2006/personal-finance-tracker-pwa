@@ -16,9 +16,10 @@ h2{font-size:13px;text-transform:uppercase;letter-spacing:.4px;color:var(--fg2);
 .tab{flex:1;min-height:var(--tab-h);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:12px;color:var(--fg2);background:none;border:0;font-family:inherit;cursor:pointer}
 .tab svg{width:26px;height:26px}.tab.on{color:var(--accent)}
 input,select,textarea,button{font:inherit;color:inherit}
-input,select,textarea{font-size:16px;width:100%;background:var(--bg2);border:0;border-radius:10px;padding:12px 14px;outline:none;min-height:44px}
+input,select,textarea{font-size:16px;width:100%;background:var(--bg2);border:2px solid var(--fg);border-radius:10px;padding:12px 14px;outline:none;min-height:44px}
 input:focus,select:focus,textarea:focus{box-shadow:0 0 0 2px var(--accent)}
-.history-confirm-input{border:2px solid var(--fg);margin-top:8px}
+input[type=checkbox],input[type=radio],input[type=hidden]{border:0}
+.history-confirm-input{margin-top:8px}
 .field{margin:0 0 12px}.field label{display:block;font-size:13px;color:var(--fg2);margin:0 4px 4px}
 .btn{display:inline-flex;min-width:0;overflow-wrap:anywhere;align-items:center;justify-content:center;min-height:50px;padding:0 20px;border:0;border-radius:14px;background:var(--accent);color:var(--on-accent);font-weight:600;font-size:17px;width:100%;cursor:pointer;transition:transform .12s var(--ease),opacity .12s}
 .btn:active{transform:scale(.98);opacity:.85}.btn.sec{background:var(--bg3);color:var(--fg)}.btn.danger{background:rgba(255,69,58,.15);color:var(--red)}.btn[disabled]{opacity:.45}
@@ -51,8 +52,10 @@ h1{font-size:32px;letter-spacing:-1px;font-weight:750;margin:8px 0 22px}
 .feed-select{margin-bottom:12px}
 .header-import{width:44px;height:44px;flex:none;border-radius:50%;border:1px solid var(--sep);background:var(--bg2);color:var(--accent);display:grid;place-items:center;cursor:pointer}
 .header-import svg{width:21px;height:21px}
-.spotlight{display:flex;align-items:center;gap:8px;background:var(--bg2);border-radius:14px;padding:0 12px;color:var(--fg2);margin-bottom:12px}
-.spotlight svg{width:19px;height:19px;flex:none}.spotlight input{background:transparent;padding:12px 0;min-width:0;font-size:16px}
+.spotlight{display:flex;align-items:center;gap:8px;border:2px solid var(--fg);background:var(--bg2);border-radius:14px;padding:0 12px;color:var(--fg2);margin-bottom:12px}
+.spotlight svg{width:19px;height:19px;flex:none}.spotlight input{border:0;background:transparent;padding:12px 0;min-width:0;font-size:16px}
+.spotlight:focus-within{box-shadow:0 0 0 2px var(--accent)}
+.spotlight input:focus{box-shadow:none}
 .filter-pills{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin:0 -2px 18px;padding:2px;overscroll-behavior-x:contain}
 .filter-pills::-webkit-scrollbar{display:none}
 .filter-pills button{flex:none;min-height:44px;border:1px solid var(--sep);border-radius:24px;padding:0 14px;background:var(--bg2);color:var(--fg2);font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap}
@@ -83,13 +86,13 @@ h1{font-size:32px;letter-spacing:-1px;font-weight:750;margin:8px 0 22px}
 .quick-amounts{display:flex;gap:8px;margin:8px 0 20px}.quick-amounts button{flex:1;min-height:44px;border:0;border-radius:24px;background:var(--bg3);color:var(--fg2);font-size:14px;font-weight:600;white-space:normal;padding:0 6px;cursor:pointer}
 .form-group{border-radius:20px;background:var(--bg3);padding:0 14px;margin-bottom:20px}
 .form-group .field{display:flex;align-items:center;gap:8px;min-height:58px;margin:0;border-bottom:.5px solid var(--sep)}.form-group .field:last-child{border:0}
-.form-group .field>label{flex:0 0 78px;margin:0;font-size:13px}.form-group input,.form-group select{background:transparent;border-radius:8px;text-align:right;min-width:0;padding:12px 0;font-size:16px}
+.form-group .field>label{flex:0 0 78px;margin:0;font-size:13px}.form-group input,.form-group select{background:transparent;border-radius:8px;text-align:right;min-width:0;padding:12px 10px;font-size:16px}
 .form-group .field>input{flex:1;width:0}.category-control{flex:1;min-width:0;display:grid;justify-items:end;padding:6px 0}.category-control select{width:100%;text-overflow:ellipsis}
 .auto-badge{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:12px;padding:4px 7px;font-size:13px;color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}
 .btn{border-radius:16px}.btn:hover:not(:disabled){filter:brightness(.96)}button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .island-toast{position:fixed;top:calc(var(--sat) + 12px);left:50%;transform:translateX(-50%);z-index:40;display:flex;align-items:center;gap:9px;width:max-content;max-width:calc(100vw - 32px);padding:13px 18px;border-radius:28px;background:var(--fg);color:var(--bg);box-shadow:0 10px 40px rgba(0,0,0,.25);font-size:13px;font-weight:600;animation:fade .2s var(--ease);pointer-events:none}.island-toast svg{width:18px;height:18px;flex:none}
 .import-hero{display:grid;place-items:center;width:48px;height:48px;margin:12px auto;border-radius:22px;background:color-mix(in srgb,var(--accent) 14%,var(--bg2));color:var(--accent);font-size:40px;font-weight:400}
-.statement-file{border:1.5px dashed var(--sep);background:var(--bg2);padding:20px 14px;border-radius:20px;margin:4px 0 24px;min-height:86px;overflow:hidden}
+.statement-file{border:2px solid var(--fg);background:var(--bg2);padding:20px 14px;border-radius:20px;margin:4px 0 24px;min-height:86px;overflow:hidden}
 .statement-file::file-selector-button{border:0;border-radius:12px;background:var(--accent);color:var(--on-accent);padding:12px;margin-right:12px;font:600 14px var(--font);cursor:pointer}
 .parsing-state{display:flex;align-items:center;gap:12px;padding:20px;border-radius:20px;background:var(--bg2);color:var(--fg2);font-size:14px;margin-top:16px}
 .spinner{display:inline-block;width:20px;height:20px;border:2px solid var(--sep);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex:none}@keyframes spin{to{transform:rotate(360deg)}}
