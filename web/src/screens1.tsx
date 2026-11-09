@@ -1,4 +1,4 @@
-import { MAX_NOTE_LENGTH } from '../../shared/types';
+import { MAX_NOTE_LENGTH, type EntryDTO as Entry } from '../../shared/types';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { shiftDocumentScroll } from './scroll-lock';
 import { EntryCard } from './entry-card';
@@ -64,14 +64,18 @@ export async function doLogout(): Promise<string | null> {
 }
 
 // ---------- Лента ----------
-interface Entry { id: string; occurredAt: number; version: number; payload: { direction: 'in' | 'out'; amountMinor: number; counterparty: string; note?: string; categoryId?: string | null }; effectiveCategoryId: string | null }
+type FeedFilter = 'all' | 'out' | 'in' | 'auto';
+function matchesFilter(entry: Entry, filter: FeedFilter) {
+  if (filter === 'auto') return !entry.payload.categoryId && !!entry.effectiveCategoryId;
+  return filter === 'all' || entry.payload.direction === filter;
+}
 
 export function Feed({ onImport }: {onImport:()=>void}) {
   const pendingAction=useAction();
   const queueStatus=useSyncExternalStore(subscribeQueue,getQueueStatus);
   const { cats, login, version } = useAppState(); const cm = useMemo(() => catMap(cats), [cats]);
   const [items, setItems] = useState<Entry[]>([]); const [next, setNext] = useState<any>(null); const [q, setQ] = useState('');
-  const [filter,setFilter]=useState<'all'|'out'|'in'|'auto'>('all');
+  const [filter,setFilter]=useState<FeedFilter>('all');
   const [summary,setSummary]=useState<{in:number;out:number;net:number}|null>(null);
   useEffect(()=>{let active=true;api('GET','/api/reports/summary?month='+thisMonth()).then(r=>{if(active)setSummary(r.totals);}).catch(()=>{});return ()=>{active=false;};},[version,queueStatus.count]);
   const [pending, setPending] = useState<QItem[]>([]); const [err, setErr] = useState(''); const [edit, setEdit] = useState<Entry | null>(null); const [loading, setLoading] = useState(true);
@@ -87,6 +91,16 @@ export function Feed({ onImport }: {onImport:()=>void}) {
     const rows=Array.from(root.current?.querySelectorAll<HTMLElement>('[data-entry-id]')??[]).filter(el=>ids.has(el.dataset.entryId!));
     const row=rows.find(el=>el.getBoundingClientRect().bottom>0)??rows.at(-1);
     anchor.current=row?{id:row.dataset.entryId!,top:row.getBoundingClientRect().top}:null;
+  }
+  function applySavedEntry(entry: Entry) {
+    if (getState().login !== login) return;
+    generation.current++;
+    const updated = itemsRef.current.map(item => item.id === entry.id ? entry : item);
+    remember(updated.filter(item => matchesFilter(item, filter)));
+    setItems(updated);
+    setLoading(true);
+    setEdit(null);
+    bump();
   }
   useLayoutEffect(()=>{
     const saved=anchor.current;anchor.current=null;
@@ -114,7 +128,7 @@ export function Feed({ onImport }: {onImport:()=>void}) {
         if(cursor){p.set('beforeTime',cursor.beforeTime);p.set('beforeId',cursor.beforeId);}
         const r=await api('GET','/api/entries?'+p);
         if(current!==generation.current)return;
-        visible.push(...r.items.filter((e:Entry)=>filter==='auto'?!e.payload.categoryId&&!!e.effectiveCategoryId:filter==='all'||e.payload.direction===filter));
+        visible.push(...r.items.filter((entry: Entry) => matchesFilter(entry, filter)));
         following=r.next;cursor=r.next;
       }while(visible.length<target&&cursor);
       const result=append?[...itemsRef.current,...visible]:visible;
@@ -141,7 +155,7 @@ export function Feed({ onImport }: {onImport:()=>void}) {
   }
   useEffect(()=>{const t=setTimeout(()=>load(false),q?250:0);return ()=>{clearTimeout(t);generation.current++;};},[q,version,filter,queueStatus.count]);
   useEffect(() => { let active=true;if (login) listQueue(login).then(r=>{if(active)setPending(r);}).catch(()=>{if(active)setPending(previous=>previous.filter(item=>item.login===login));});return ()=>{active=false;}; }, [login, version, items, queueStatus.count, queueStatus.failed, queueStatus.lastResult]);
-  const groups = useMemo(() => { const g = new Map<string, Entry[]>(); for (const e of items) { if(filter==='auto' ? !!e.payload.categoryId || !e.effectiveCategoryId : filter!=='all' && e.payload.direction!==filter)continue; const k = dayLabel(e.occurredAt); (g.get(k) ?? g.set(k, []).get(k)!).push(e); } return [...g]; }, [items,filter]);
+  const groups = useMemo(() => { const g = new Map<string, Entry[]>(); for (const e of items) { if (!matchesFilter(e, filter)) continue; const k = dayLabel(e.occurredAt); (g.get(k) ?? g.set(k, []).get(k)!).push(e); } return [...g]; }, [items,filter]);
   return <div ref={root} style={{overflowAnchor:'none',minHeight:refreshHeight}}>
     <header className={'feed-heading'+(items.length?' with-selection':'')}><div><div className="screen-kicker">QARJY · ВАШИ ФИНАНСЫ</div><h1>Лента</h1></div><button className="header-import" aria-label="Загрузить выписку" onClick={onImport}>{Icons.upload}</button></header>
     {items.length>0&&<button className="btn small sec feed-select" style={{visibility:selecting?'hidden':undefined}} onClick={()=>setSelecting(true)}>Выбрать операции</button>}
@@ -178,17 +192,23 @@ export function Feed({ onImport }: {onImport:()=>void}) {
     })}</div></section>)}
     {loading && <div className="feed-loading" role="status">Обновляем ленту…</div>}
     {next && <button disabled={loading} className="btn sec" style={{ marginTop: 16 }} onClick={() => load(true)}>Показать ещё</button>}
-    {edit && <EditSheet e={edit} cats={cats} onClose={() => setEdit(null)} />}
+    {edit && <EditSheet e={edit} cats={cats} onSaved={applySavedEntry} onClose={() => setEdit(null)} />}
   </div>;
 }
 
-function EditSheet({ e, cats, onClose }: { e: Entry; cats: Cat[]; onClose: () => void }) {
+function EditSheet({ e, cats, onSaved, onClose }: { e: Entry; cats: Cat[]; onSaved: (entry: Entry) => void; onClose: () => void }) {
   const action=useAction();
   const p = e.payload;
   const [dir, setDir] = useState(p.direction); const [amount, setAmount] = useState(String(p.amountMinor / 100)); const [cp, setCp] = useState(p.counterparty);
   const [cat, setCat] = useState(p.categoryId ?? ''); const [note, setNote] = useState(p.note ?? ''); const [date, setDate] = useState(new Date(e.occurredAt + 5 * 3600e3).toISOString().slice(0, 10));
   const opts = cats.filter(c => c.type === (dir === 'in' ? 'income' : 'expense'));
-  const save=()=>action.run(async()=>{await api('PATCH',`/api/entries/${e.id}`,{version:e.version,direction:dir,amount,counterparty:cp,categoryId:cat||null,note,occurredAt:date===new Date(e.occurredAt+5*3600e3).toISOString().slice(0,10)?e.occurredAt:date});bump();onClose();});
+  const save = () => action.run(async () => {
+    const { entry } = await api<{ entry: Entry }>('PATCH', `/api/entries/${e.id}`, {
+      version: e.version, direction: dir, amount, counterparty: cp, categoryId: cat || null, note,
+      occurredAt: date === new Date(e.occurredAt + 5 * 3600e3).toISOString().slice(0, 10) ? e.occurredAt : date,
+    });
+    onSaved(entry);
+  });
   function remove(){if(confirm('Удалить запись?'))void action.run(async()=>{await api('DELETE',`/api/entries/${e.id}`);bump();onClose();});}
   return <Sheet title="Запись" onClose={onClose} busy={action.busy}>
     <div className="seg"><button disabled={action.busy} className={dir === 'out' ? 'on' : ''} onClick={() => { setDir('out'); setCat(''); }}>Расход</button><button disabled={action.busy} className={dir === 'in' ? 'on' : ''} onClick={() => { setDir('in'); setCat(''); }}>Доход</button></div>

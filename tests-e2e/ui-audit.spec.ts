@@ -53,6 +53,49 @@ test('аудит: редактор — повторное сохранение, 
  await page.getByTestId('entry-row').click();await page.route('**/api/entries/*',route=>route.abort(),{times:1});page.once('dialog',d=>d.accept());await sheet.getByRole('button',{name:'Удалить',exact:true}).click();await expect(sheet.getByRole('alert')).toContainText('Нет связи');page.once('dialog',d=>d.accept());await sheet.getByRole('button',{name:'Удалить',exact:true}).click();await expect(sheet).toHaveCount(0);await expect(page.getByTestId('entry-row')).toHaveCount(0);await more(page,'Синхронизация');await page.getByRole('button',{name:'‹ Ещё',exact:true}).click();await page.getByRole('button',{name:'Выйти',exact:true}).click();await expect(page.getByLabel('Логин',{exact:true})).toBeVisible();
 });
 
+test('категория операции сразу видна в ленте и попадает в отчёт без перезагрузки', async ({ page }) => {
+  await prepare(page);
+  const nav = page.getByRole('navigation');
+  const recipient = page.getByTestId('cp-row').filter({ hasText: 'AUDIT CARD' });
+  await nav.getByRole('button', { name: 'Отчёты', exact: true }).click();
+  await expect(recipient).toContainText('выбрать категорию');
+  await nav.getByRole('button', { name: 'Лента', exact: true }).click();
+
+  const row = page.getByTestId('entry-row');
+  await expect(row).toContainText('без категории');
+  await row.click();
+  const sheet = page.getByRole('dialog');
+  const category = sheet.getByLabel('Категория', { exact: true });
+  const [healthId] = await category.selectOption({ label: 'Здоровье' });
+  await page.route('**/api/entries/*', route => route.abort(), { times: 1 });
+  await sheet.getByRole('button', { name: 'Сохранить', exact: true }).click();
+  await expect(sheet.getByRole('alert')).toContainText('Нет связи');
+  await expect(row).toContainText('без категории');
+
+  const refresh = await hold(page, '**/api/entries?*');
+  try {
+    await sheet.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await refresh.requested;
+    await expect(sheet).toHaveCount(0);
+    await expect(row).toContainText('Здоровье');
+    await expect(row).not.toContainText('без категории');
+    await row.click();
+    await expect(category).toHaveValue(healthId);
+    await sheet.getByRole('button', { name: 'Закрыть', exact: true }).click();
+
+    await nav.getByRole('button', { name: 'Отчёты', exact: true }).click();
+    const healthTotal = page.getByTestId('cat-row').filter({ hasText: 'Здоровье' });
+    await expect(healthTotal).toContainText('100 ₸');
+    await expect(healthTotal).toContainText('1 · 100%');
+    await expect(recipient).toContainText('Здоровье');
+    await expect(recipient).not.toContainText('выбрать категорию');
+    await recipient.click();
+    await expect(sheet.getByRole('button', { name: 'Снять привязку' })).toHaveCount(0);
+  } finally {
+    refresh.release();
+  }
+});
+
 test('аудит: spinner и блокировка всех переключателей CSV во время проверки',async({page})=>{
  await prepare(page);await page.getByRole('navigation').getByRole('button',{name:'Выписка',exact:true}).click();await page.getByLabel('Универсальный CSV').check();await page.getByLabel('Файл выписки').setInputFiles({name:'synthetic-ui.csv',mimeType:'text/csv',buffer:Buffer.from('date;amount;name\n2026-11-01;-5;AUDIT CSV')});
  for(const mode of ['Две колонки','Колонка типа','Сумма со знаком'])await page.getByRole('button',{name:mode,exact:true}).click();const gate=await hold(page,'**/api/import');await page.getByRole('button',{name:'Проверить',exact:true}).click();await gate.requested;await expect(page.locator('.spinner')).toBeVisible();expect(await page.locator('.spinner').evaluate(el=>getComputedStyle(el).animationName)).toBe('spin');for(const name of ['Две колонки','Колонка типа','Сумма со знаком','Проверить','Импортировать'])await expect(page.getByRole('button',{name,exact:true})).toBeDisabled();await expect(page.getByLabel('Дата',{exact:true})).toBeDisabled();await page.emulateMedia({reducedMotion:'reduce'});expect(await page.locator('.spinner').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');gate.release();await expect(page.locator('.spinner')).toHaveCount(0);await expect(page.getByRole('button',{name:'Импортировать',exact:true})).toBeEnabled();

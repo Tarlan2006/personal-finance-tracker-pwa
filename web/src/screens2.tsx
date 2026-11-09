@@ -9,7 +9,16 @@ import { doLogout } from './screens1';
 import { FinancialProfileScreen } from './onboarding';
 
 // ---------- Отчёты ----------
-interface Summary { month: string; totals: { in: number; out: number; net: number; count: number }; byCategory: Record<'in' | 'out', Array<{ id: string | null; name: string; color: string; sum: number; count: number }>>; byCounterparty: Record<'in' | 'out', Array<{ name: string; display: string; sum: number; count: number; categoryId: string | null }>>; uncategorized: { count: number; sum: number } }
+interface CounterpartySummary {
+  name: string;
+  display: string;
+  sum: number;
+  count: number;
+  categoryId: string | null;
+  effectiveCategoryId: string | null;
+  uncategorizedCount: number;
+}
+interface Summary { month: string; totals: { in: number; out: number; net: number; count: number }; byCategory: Record<'in' | 'out', Array<{ id: string | null; name: string; color: string; sum: number; count: number }>>; byCounterparty: Record<'in' | 'out', CounterpartySummary[]>; uncategorized: { count: number; sum: number } }
 
 function Donut({ data, total }: { data: Array<{ name: string; color: string; sum: number }>; total: number }) {
   const R = 54, C = 2 * Math.PI * R; let off = 0;
@@ -72,9 +81,11 @@ export function Reports() {
           <span className="dot" style={{ background: c.color }} /><div className="grow"><div>{c.name}</div><div className="bar"><i style={{ width: `${total ? (c.sum / total) * 100 : 0}%`, background: c.color }} /></div></div>
           <div style={{ textAlign: 'right' }}><div className="amt">{fmt(c.sum)}</div><div className="sub">{c.count} · {total ? Math.round((c.sum / total) * 100) : 0}%</div></div></div>)}</div>
         <h2>По {dir === 'out' ? 'получателям' : 'отправителям'}</h2>
-        <div className="group">{cpRows.map(c => { const cat = cats.find(x => x.id === c.categoryId);
+        <div className="group">{cpRows.map(c => {
+          const categoryName = c.effectiveCategoryId && catRows.find(x => x.id === c.effectiveCategoryId)?.name;
+          const categoryLabel = c.uncategorizedCount > 0 ? 'Есть операции без категории' : categoryName || 'Несколько категорий';
           return <button className="row" key={c.name} data-testid="cp-row" data-counterparty={c.name} onClick={e => {if(c.name!=='_none'){e.currentTarget.focus({preventScroll:true});setPick(c);}}}>
-            <div className="grow"><div className="ell">{c.display}</div><div className="sub">{c.count} {plural(c.count)} · {cat ? cat.name : <span className="chip warn">выбрать категорию</span>}</div><div className="bar"><i style={{ width: `${total ? (c.sum / total) * 100 : 0}%` }} /></div></div>
+            <div className="grow"><div className="ell">{c.display}</div><div className="sub">{c.count} {plural(c.count)} · {c.uncategorizedCount === c.count ? <span className="chip warn">выбрать категорию</span> : categoryLabel}</div><div className="bar"><i style={{ width: `${total ? (c.sum / total) * 100 : 0}%` }} /></div></div>
             <span className="amt">{fmt(c.sum)}</span></button>; })}</div>
       </>}
     </>}

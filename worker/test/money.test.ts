@@ -112,6 +112,41 @@ describe('изоляция аккаунтов', () => {
 });
 
 describe('категории и контрагенты', () => {
+  it('явная категория операции сразу меняет сводку и не создаёт привязку получателя', async () => {
+    const { env, o } = await setup();
+    const health = await catId(env, o, 'Здоровье');
+    const shops = await catId(env, o, 'Магазины');
+    const ids = ['tx-category-edit-1', 'tx-category-edit-2'];
+    for (const id of ids) {
+      const result = await call(env, 'POST', '/api/entries', { cookie: o, body: {
+        id, direction: 'out', counterparty: 'SYNTHETIC CATEGORY EDIT', amountMinor: 12345, occurredAt: '2026-11-03',
+      } });
+      expect(result.status).toBe(201);
+    }
+    const save = (id: string, categoryId: string) => call(env, 'PATCH', `/api/entries/${id}`, { cookie: o, body: { categoryId } });
+    const summary = async () => (await call(env, 'GET', '/api/reports/summary?month=2026-11', { cookie: o })).data;
+
+    const saved = await save(ids[0], health);
+    expect(saved.status).toBe(200);
+    expect(saved.data.entry).toMatchObject({ id: ids[0], payload: { categoryId: health }, effectiveCategoryId: health });
+    const partial = await summary();
+    expect(partial.byCategory.out).toContainEqual(expect.objectContaining({ id: health, sum: 12345, count: 1 }));
+    expect(partial.uncategorized).toEqual({ count: 1, sum: 12345 });
+    expect(partial.byCounterparty.out[0]).toMatchObject({ categoryId: null, effectiveCategoryId: null, uncategorizedCount: 1, count: 2 });
+
+    expect((await save(ids[1], health)).status).toBe(200);
+    const uniform = await summary();
+    expect(uniform.byCategory.out).toEqual([expect.objectContaining({ id: health, sum: 24690, count: 2 })]);
+    expect(uniform.byCounterparty.out[0]).toMatchObject({ categoryId: null, effectiveCategoryId: health, uncategorizedCount: 0 });
+
+    expect((await save(ids[1], shops)).status).toBe(200);
+    const mixed = await summary();
+    expect(mixed.byCategory.out).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: health, sum: 12345, count: 1 }),
+      expect.objectContaining({ id: shops, sum: 12345, count: 1 }),
+    ]));
+    expect(mixed.byCounterparty.out[0]).toMatchObject({ categoryId: null, effectiveCategoryId: null, uncategorizedCount: 0 });
+  });
   it('привязка контрагента перекатегоризирует всю историю; удаление категории → «Без категории»', async () => {
     const { env, o } = await setup();
     for (let i = 0; i < 5; i++) await call(env, 'POST', '/api/entries', { cookie: o, body: { id: `mir-id-00${i}`, direction: 'out', amountMinor: 240000, counterparty: 'ИП Мирас' } });
