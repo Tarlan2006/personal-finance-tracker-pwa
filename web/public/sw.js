@@ -1,7 +1,11 @@
 // Cache Storage is optional (for example, in restricted Safari sessions).
 // API responses always go directly to the network.
-const SHELL = 'qarjy-shell-v2';
+const SHELL = 'qarjy-shell-v3';
 const FILES = ['/', '/manifest.webmanifest', '/icon.svg', '/apple-touch-icon.png'];
+const BANK_FILES = ['kaspi', 'halyk', 'forte', 'freedom'].map(bank => '/banks/' + bank + '.png');
+function isImage(response) {
+  return response.ok && (response.headers.get('Content-Type') || '').startsWith('image/');
+}
 async function withCache(action) {
   try {
     const storage = self.caches;
@@ -9,7 +13,14 @@ async function withCache(action) {
   } catch { /* Disabled storage must not break network responses or activation. */ }
 }
 self.addEventListener('install', e => {
-  e.waitUntil(withCache(async storage => (await storage.open(SHELL)).addAll(FILES)).then(() => self.skipWaiting()));
+  e.waitUntil(withCache(async storage => {
+    const cache = await storage.open(SHELL);
+    await cache.addAll(FILES);
+    await Promise.allSettled(BANK_FILES.map(async path => {
+      const response = await fetch(path);
+      if (isImage(response)) await cache.put(path, response);
+    }));
+  }).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
   e.waitUntil(withCache(async storage => {
@@ -23,7 +34,7 @@ self.addEventListener('fetch', e => {
   e.respondWith((async () => {
     try {
       const response = await fetch(e.request);
-      if (response.ok && (u.pathname.startsWith('/assets/') || FILES.includes(u.pathname))) {
+      if (response.ok && (u.pathname.startsWith('/assets/') || (u.pathname.startsWith('/banks/') && isImage(response)) || FILES.includes(u.pathname))) {
         const copy = response.clone();
         e.waitUntil(withCache(async storage => (await storage.open(SHELL)).put(e.request, copy)));
       }

@@ -1,3 +1,4 @@
+import { BankLogo, BankSelectControl } from './bank-logo';
 import {useEffect,useRef,useState} from 'react';
 import type {AccountBudget,FinancialProfileRecord} from '../../shared/financial-profile';
 import {api,ApiError} from './api';
@@ -14,7 +15,7 @@ export function BudgetSheet({accountId,onClose}:{accountId:string;onClose:()=>vo
     setState({financialProfile:saved});bump();reset();
   });
   return <Sheet title="Бюджеты счёта" onClose={onClose} busy={action.busy}>
-    <p className="muted">{account?.bank} · {account?.name}. Это планы расходов: они не списывают деньги и не меняют остаток.</p>
+    <p className="muted">{account&&<BankLogo {...account} size={28}/>} {account?.bank} · {account?.name}. Это планы расходов: они не списывают деньги и не меняют остаток.</p>
     <div className="group">{account?.budgets?.map(b=><div className="row" key={b.id}><button className="text-action grow" disabled={action.busy} onClick={()=>{setEditing(b.id);setName(b.name);setAmount(String(b.amountMinor/100));}}>{b.name} · {fmt(b.amountMinor)}</button><button className="text-action" aria-label={'Удалить бюджет '+b.name} disabled={action.busy} onClick={()=>{if(confirm('Удалить бюджет «'+b.name+'»?'))void save(account.budgets!.filter(x=>x.id!==b.id));}}>✕</button></div>)}</div>
     <form onSubmit={e=>{e.preventDefault();const minor=inputMinor(amount);if(minor===null)return;const item={id:editing??crypto.randomUUID(),name:name.trim(),amountMinor:minor};void save(editing?(account?.budgets??[]).map(b=>b.id===editing?item:b):[...(account?.budgets??[]),item]);}}>
       <fieldset disabled={action.busy} className="wallet-fields">
@@ -36,6 +37,10 @@ export function TransferSheet({onClose}:{onClose:()=>void}){
   const action=useAction(),attempt=useRef<(Transfer&{accountLogin:string|null})|null>(null),[uncertain,setUncertain]=useState(false);
   useEffect(()=>{let active=true;api<{items:Transfer[]}>('GET','/api/transfers').then(r=>{if(active){setItems(r.items);setLoadError('');}}).catch(e=>{if(active)setLoadError(e.message);});return()=>{active=false;};},[version,reload]);
   const label=(id:string)=>{const a=accounts.find(a=>a.id===id);return a?a.bank+' · '+a.name:'Удалённый счёт';};
+  const transferAccount=(id:string)=>{
+    const account=accounts.find(a=>a.id===id);
+    return account?<span className="bank-inline"><BankLogo {...account} size={28}/>{label(id)}</span>:label(id);
+  };
   const save=()=>action.run(async()=>{
     const minor=inputMinor(amount);if(!minor)throw new Error('Введите положительную сумму');
     attempt.current??={id:editing?.id??crypto.randomUUID(),version:editing?.version,comment,fromId:from,toId:to,amountMinor:minor,occurredAt:Date.parse(date+'T00:00:00+05:00'),accountLogin:login};
@@ -46,8 +51,8 @@ export function TransferSheet({onClose}:{onClose:()=>void}){
     <p className="muted">Запишите уже совершённый перевод. Деньги в банке не переводятся; в учёте изменятся два остатка, без дохода и расхода.</p>
     {accounts.length<2?<p>Добавьте второй счёт в финансовом профиле.</p>:<form onSubmit={e=>{e.preventDefault();void save();}}>
       <fieldset disabled={action.busy||uncertain} className="wallet-fields">
-        <Field label="Откуда"><select aria-label="Откуда" value={from} onChange={e=>setFrom(e.target.value)}>{accounts.map(a=><option key={a.id} value={a.id}>{label(a.id)}</option>)}</select></Field>
-        <Field label="Куда"><select aria-label="Куда" value={to} onChange={e=>setTo(e.target.value)}>{accounts.map(a=><option key={a.id} value={a.id}>{label(a.id)}</option>)}</select></Field>
+        <Field label="Откуда"><BankSelectControl account={accounts.find(a=>a.id===from)}><select aria-label="Откуда" value={from} onChange={e=>setFrom(e.target.value)}>{accounts.map(a=><option key={a.id} value={a.id}>{label(a.id)}</option>)}</select></BankSelectControl></Field>
+        <Field label="Куда"><BankSelectControl account={accounts.find(a=>a.id===to)}><select aria-label="Куда" value={to} onChange={e=>setTo(e.target.value)}>{accounts.map(a=><option key={a.id} value={a.id}>{label(a.id)}</option>)}</select></BankSelectControl></Field>
         <Field label="Сумма перевода, ₸"><input aria-label="Сумма перевода" inputMode="decimal" required value={amount} onChange={e=>setAmount(e.target.value)}/></Field>
         <Field label="Дата перевода"><input aria-label="Дата перевода" type="date" min={financialProfile?.profile?.balanceDate} max={todayStr()} required value={date} onChange={e=>setDate(e.target.value)}/></Field>
       <Field label="Комментарий"><input aria-label="Комментарий перевода" maxLength={500} value={comment} onChange={e=>setComment(e.target.value)}/></Field>
@@ -57,6 +62,6 @@ export function TransferSheet({onClose}:{onClose:()=>void}){
     {uncertain&&<p role="alert" className="err">Ответ не получен. Повторите подтверждение с тем же номером: второй перевод не создастся. Не закрывайте приложение до подтверждения.</p>}
     {action.error&&<p className="err" role="alert">{action.error}</p>}{notice&&<p role="status" className="ok">{notice}</p>}
     <h2>Последние 50 переводов</h2>{loadError&&<p role="alert" className="err">{loadError}<button className="text-action" onClick={()=>setReload(n=>n+1)}>Повторить загрузку</button></p>}
-    <div className="group">{items.map(t=><div className="row" key={t.id}><div className="grow"><div>{label(t.fromId)} → {label(t.toId)}</div><div className="sub">{fmt(t.amountMinor)} · {new Date(t.occurredAt).toLocaleDateString('ru-RU',{timeZone:'Asia/Almaty'})}</div>{t.comment&&<div className="sub">{t.comment}</div>}<button className="text-action" disabled={action.busy||uncertain} onClick={()=>{setEditing(t);setFrom(t.fromId);setTo(t.toId);setAmount(String(t.amountMinor/100));setDate(new Date(t.occurredAt+5*3600e3).toISOString().slice(0,10));setComment(t.comment??'');}}>Изменить перевод</button></div><button className="text-action" disabled={action.busy||uncertain} aria-label={'Отменить перевод '+fmt(t.amountMinor)} onClick={()=>{if(confirm('Отменить учёт перевода? Остатки обоих счетов будут восстановлены.'))void action.run(async()=>{await api('DELETE','/api/transfers/'+t.id,{version:t.version});bump();});}}>Отменить</button></div>)}</div>
+    <div className="group">{items.map(t=><div className="row" key={t.id}><div className="grow"><div>{transferAccount(t.fromId)} → {transferAccount(t.toId)}</div><div className="sub">{fmt(t.amountMinor)} · {new Date(t.occurredAt).toLocaleDateString('ru-RU',{timeZone:'Asia/Almaty'})}</div>{t.comment&&<div className="sub">{t.comment}</div>}<button className="text-action" disabled={action.busy||uncertain} onClick={()=>{setEditing(t);setFrom(t.fromId);setTo(t.toId);setAmount(String(t.amountMinor/100));setDate(new Date(t.occurredAt+5*3600e3).toISOString().slice(0,10));setComment(t.comment??'');}}>Изменить перевод</button></div><button className="text-action" disabled={action.busy||uncertain} aria-label={'Отменить перевод '+fmt(t.amountMinor)} onClick={()=>{if(confirm('Отменить учёт перевода? Остатки обоих счетов будут восстановлены.'))void action.run(async()=>{await api('DELETE','/api/transfers/'+t.id,{version:t.version});bump();});}}>Отменить</button></div>)}</div>
   </Sheet>;
 }

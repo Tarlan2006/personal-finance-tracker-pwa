@@ -3,7 +3,7 @@ import type { FinancialAccount } from '../../shared/financial-profile';
 import { api } from './api';
 import './wallet.css';
 import { Field, fmt, monthLabel, setState, thisMonth, useAppState } from './ui';
-import {BankLogo,type BankBrand} from './bank-logo';
+import { BankLogo, BankSelectControl, bankBrand } from './bank-logo';
 import {BudgetSheet,TransferSheet} from './wallet-actions';
 
 function CountUp({value,active=true,prefix=''}:{value:number|null;active?:boolean;prefix?:string}){
@@ -27,19 +27,14 @@ export function AccountSelect({ value, onChange, disabled, label = 'Счёт о�
   const { financialProfile } = useAppState();
   const accounts = financialProfile?.profile?.accounts ?? [];
   if (!accounts.length && !value) return null;
-  return <Field label={label}><select aria-label={label} value={value} disabled={disabled} onChange={e=>onChange(e.target.value)}>
+  return <Field label={label}><BankSelectControl account={accounts.find(a=>a.id===value)}><select aria-label={label} value={value} disabled={disabled} onChange={e=>onChange(e.target.value)}>
     <option value="">Без счёта</option>
     {value && !accounts.some(a=>a.id===value) && <option value={value}>Счёт удалён из анкеты</option>}
     {accounts.map(a=><option key={a.id} value={a.id}>{a.bank} · {a.name} · {kinds[a.kind]}</option>)}
-  </select></Field>;
+  </select></BankSelectControl></Field>;
 }
 type WalletAccount = FinancialAccount & {balanceMinor:number|null;in:number;out:number};
 interface WalletData {accounts:WalletAccount[];balanceDate:string|null;unassigned:number}
-function palette(a:FinancialAccount):BankBrand {
-  if(a.kind==='cash')return 'cash';
-  const bank=a.bank.toLowerCase();
-  return bank.includes('kaspi')?'kaspi':bank.includes('freedom')||bank.includes('фридом')?'freedom':bank.includes('halyk')?'halyk':bank.includes('forte')?'forte':'other';
-}
 export function Wallet({ queueCount, disabled }: {queueCount:number;disabled:boolean}) {
   const {financialProfile,version,selectedAccount}=useAppState();
   const [data,setData]=useState<WalletData|null>(null),[error,setError]=useState(''),[retry,setRetry]=useState(0);
@@ -68,7 +63,7 @@ export function Wallet({ queueCount, disabled }: {queueCount:number;disabled:boo
     <div className="wallet-stack" style={{height:(accounts.length-1)*step+(accounts.some(a=>a.kind==='cash')?448:344)} as CSSProperties}>
       {accounts.map(a=>{
         const open=a.id===expanded,slot=order.findIndex(row=>row.id===a.id);
-        const height=open?expandedHeight:closedHeight,y=slot*step+(selectedAccount&&slot>0?expandedHeight-step:0),brand=palette(a),budgets=a.budgets??[];
+        const height=open?expandedHeight:closedHeight,y=slot*step+(selectedAccount&&slot>0?expandedHeight-step:0),brand=bankBrand(a.bank,a.kind),budgets=a.budgets??[];
         const toggle=()=>{if(!disabled)setState({selectedAccount:selectedAccount===a.id?null:a.id});};
         return <article key={a.id} data-testid="wallet-card" data-account={a.id} className={`wallet-card wallet-${brand}${open?' expanded':''}`}
           onClick={e=>{if(!(e.target as HTMLElement).closest('button,.wallet-budgets'))toggle();}}
@@ -76,7 +71,7 @@ export function Wallet({ queueCount, disabled }: {queueCount:number;disabled:boo
           <div className="wallet-card-enter">
             <div className="wallet-surface" aria-hidden="true"><i className="wallet-surface-top"/><i className="wallet-surface-middle"/><i className="wallet-surface-bottom"/></div>
             <button type="button" disabled={disabled} className="wallet-card-toggle" aria-pressed={selectedAccount===a.id} aria-expanded={open} aria-label={`${a.bank} · ${a.name} · ${kinds[a.kind]}`} onClick={toggle}>
-              <span className="wallet-card-heading"><BankLogo brand={brand}/><span className="wallet-card-title"><strong>{brand==='cash'?'Наличка':a.bank}</strong><span className="wallet-account-name">{a.name}{a.kind==='deposit'?' · Депозит':''}</span><span className="wallet-budget-placeholder">{brand==='cash'?`Счёт · ${budgets.length} ${budgets.length===1?'бюджет':budgets.length>1&&budgets.length<5?'бюджета':'бюджетов'}`:'\u00a0'}</span></span><span className="wallet-mini-balance"><small>БАЛАНС</small><b>{data&&a.balanceMinor!==null?fmt(a.balanceMinor):'—'}</b></span></span>
+              <span className="wallet-card-heading"><BankLogo bank={a.bank} kind={a.kind}/><span className="wallet-card-title"><strong>{brand==='cash'?'Наличка':a.bank}</strong><span className="wallet-account-name">{a.name}{a.kind==='deposit'?' · Депозит':''}</span><span className="wallet-budget-placeholder">{brand==='cash'?`Счёт · ${budgets.length} ${budgets.length===1?'бюджет':budgets.length>1&&budgets.length<5?'бюджета':'бюджетов'}`:'\u00a0'}</span></span><span className="wallet-mini-balance"><small>БАЛАНС</small><b>{data&&a.balanceMinor!==null?fmt(a.balanceMinor):'—'}</b></span></span>
             </button>
             {brand!=='cash'&&<button type="button" className="wallet-budget-add" aria-label={'Бюджеты '+a.bank+' · '+a.name} disabled={disabled} onClick={()=>setBudgetAccount(a.id)}>+ бюджет</button>}
             <div className="wallet-details" aria-hidden={!open}>

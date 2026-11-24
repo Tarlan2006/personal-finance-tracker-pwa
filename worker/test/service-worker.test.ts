@@ -45,6 +45,18 @@ it('SW: APIs, other origins and mutations bypass interception',async()=>{
  expect(w.network).not.toHaveBeenCalled();expect(open).not.toHaveBeenCalled();
 });
 it('SW: activation removes only obsolete Qarjy shell caches',async()=>{
- const remove=vi.fn();const w=worker({keys:async()=>['qarjy-shell-v1','qarjy-shell-v2','other-app'],delete:remove});await w.dispatch('activate');
- expect(remove).toHaveBeenCalledExactlyOnceWith('qarjy-shell-v1');
+ const remove=vi.fn();const w=worker({keys:async()=>['qarjy-shell-v2','qarjy-shell-v3','other-app'],delete:remove});await w.dispatch('activate');
+ expect(remove).toHaveBeenCalledExactlyOnceWith('qarjy-shell-v2');
+});
+
+it('SW: precaches bank images and ignores HTML returned for missing files', async () => {
+ const put=vi.fn(), addAll=vi.fn();
+ const network=vi.fn(async (path?:string)=>path==='/banks/forte.png'
+   ? new Response('<html></html>', {headers:{'Content-Type':'text/html'}})
+   : new Response('image', {headers:{'Content-Type':'image/png'}}));
+ const w=worker({open:async()=>({put,addAll})},false,network);
+ await w.dispatch('install');
+ expect(addAll).toHaveBeenCalledOnce();
+ expect(network.mock.calls.map(([url])=>url).sort()).toEqual(['forte','freedom','halyk','kaspi'].map(b=>'/banks/'+b+'.png'));
+ expect(put.mock.calls.map(([url])=>url).sort()).toEqual(['/banks/freedom.png','/banks/halyk.png','/banks/kaspi.png']);
 });

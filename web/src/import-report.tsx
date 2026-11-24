@@ -1,12 +1,14 @@
+import { BankLogo } from './bank-logo';
 import {useEffect,useState} from 'react';
 import type {ImportRow} from '../../shared/import-report';
-interface Report {total:number;imported:number;duplicates:number;rejected:number;service:number;rows:ImportRow[];dryRun?:boolean;saved?:boolean;newCounterparties?:string[]}
+interface Report {source?:string;total:number;imported:number;duplicates:number;rejected:number;service:number;rows:ImportRow[];dryRun?:boolean;saved?:boolean;newCounterparties?:string[]}
 export function ImportReportView({report:r,onViewFeed}:{report:Report;onViewFeed?:()=>void}){
  const [visible,setVisible]=useState(100),[visibleService,setVisibleService]=useState(100),[showService,setShowService]=useState(false);
  useEffect(()=>{setVisible(100);setVisibleService(100);setShowService(false);},[r]);
  const rejected=r.rows.filter(x=>x.status==='rejected'),duplicates=r.rows.filter(x=>x.status==='duplicate'),service=r.rows.filter(x=>x.status==='service');
  return <section aria-label="Отчёт импорта">
   <h2>{r.dryRun?'Проверка (ничего не записано)':r.saved?'Сохранённый отчёт':'Готово'}</h2>
+  {r.source&&r.source!=='generic'&&<p className="bank-inline"><BankLogo bank={r.source} size={28}/>{r.source}</p>}
   <div className="group" data-testid="import-report">{[['Всего строк',r.total],[r.dryRun?'Будет добавлено':'Добавлено',r.imported],['Уже были (повторы)',r.duplicates],['Отклонено',r.rejected],['Служебные строки',r.service]].map(([label,value])=><div className="row" key={label}><span className="grow">{label}</span><b>{value}</b></div>)}</div>
   {rejected.length>0&&<section aria-label="Отклонённые операции"><h2>Отклонённые операции ({r.rejected})</h2>{rejected.slice(0,visible).map(row=><div className="banner" data-testid="import-row-result" key={row.line}>Строка {row.line}: {row.reason}<div className="sub" style={{overflowWrap:'anywhere'}}>{row.preview}</div></div>)}</section>}
   {duplicates.length>0&&<section aria-label="Повторы"><h2>Повторы ({r.duplicates})</h2>{duplicates.slice(0,visible).map(row=><div className="banner" data-testid="import-row-result" key={row.line}>Строка {row.line}: повтор<div className="sub" style={{overflowWrap:'anywhere'}}>{row.preview}</div></div>)}</section>}

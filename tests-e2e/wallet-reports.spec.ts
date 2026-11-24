@@ -115,6 +115,7 @@ test('wallet: 390px, планшет, десктоп, логотипы, стоп�
   await page.setViewportSize({width:390,height:844});await page.reload();
   const wallet=page.getByRole('region',{name:'Мои счета'}),cards=page.getByTestId('wallet-card');
   await expect(cards).toHaveCount(5);await expect(wallet.getByRole('heading',{name:'Счета и бюджеты'})).toBeVisible();
+  await expect(wallet.locator('.bank-logo img')).toHaveCount(4);
   await expect.poll(()=>wallet.locator('.bank-logo img').evaluateAll(imgs=>imgs.every(img=>(img as HTMLImageElement).complete&&(img as HTMLImageElement).naturalWidth>0))).toBe(true);
   const kaspi=page.getByRole('button',{name:'Kaspi · Gold · Карта',exact:true});
   await kaspi.click();await expect(kaspi).toHaveAttribute('aria-pressed','true');
@@ -199,4 +200,55 @@ test('счета: фильтр отчёта, перенос операции, и
   await nav.getByRole('button',{name:'Лента',exact:true}).click();
   await expect(page.getByTestId('wallet-card')).toHaveCount(4);
   await expect(page.getByRole('button',{name:'Freedom · Резерв · Депозит',exact:true})).toBeVisible();
+});
+
+test('банк в интерфейсе: импорт, кошелёк и лента', async ({page}, info) => {
+  await setup(page);
+  await page.emulateMedia({reducedMotion:'reduce'});
+  const wallet = page.getByRole('region', {name:'Мои счета'});
+  const day = page.locator('.day-section').first();
+  const file = (screen:string) => 'test-results/bank-logos/'+info.project.name+'-'+screen+'.png';
+  const settled = async (region:typeof wallet) => {
+    await expect(region.locator('.bank-logo').first()).toBeVisible();
+    await expect.poll(() => region.locator('.bank-logo img').evaluateAll(images =>
+      images.every(el => (el as HTMLImageElement).complete && (el as HTMLImageElement).naturalWidth > 0)
+    )).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  };
+  await settled(wallet);
+  await wallet.screenshot({path:file('wallet'), scale:'css', animations:'disabled'});
+  await day.getByTestId('entry-row').first().scrollIntoViewIfNeeded();
+  await settled(day);
+  await page.screenshot({path:file('feed'), scale:'css', animations:'disabled'});
+  await page.getByRole('button',{name:'Загрузить выписку',exact:true}).click();
+  const banks = page.locator('.bank-cards');
+  await expect(banks.locator('.bank-logo')).toHaveCount(3);
+  await settled(banks);
+  await page.screenshot({path:file('import'), scale:'css', animations:'disabled'});
+});
+
+test('банк в интерфейсе: ошибка загрузки сохраняет размер и фокус', async ({page}) => {
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await setup(page);
+  await page.getByRole('button',{name:'Добавить операцию',exact:true}).click();
+  const sheet = page.getByRole('dialog',{name:'Добавить',exact:true});
+  const select = sheet.getByLabel('Счёт операции');
+  const logo = sheet.locator('.bank-select-control .bank-logo');
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/banks/kaspi.png',async route => { await gate; await route.abort(); });
+  await select.focus();
+  await select.selectOption('ui-kaspi-card');
+  // Measure within the field: the sheet itself can move while iOS scrolls to focus.
+  const geometry = () => select.evaluate(el => {
+    const rect = el.getBoundingClientRect();
+    const mark = el.parentElement!.querySelector('.bank-logo')!.getBoundingClientRect();
+    return [rect.width, rect.height, mark.width, mark.height, mark.x - rect.x, Math.round(mark.y - rect.y)];
+  });
+  const before = await geometry();
+  release();
+  await expect(logo).toHaveText('K');
+  await expect(logo.locator('img')).toHaveCount(0);
+  expect(await geometry()).toEqual(before);
+  await expect(select).toBeFocused();
 });

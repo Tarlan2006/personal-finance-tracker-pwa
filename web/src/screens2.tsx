@@ -1,3 +1,4 @@
+import { BankLogo, BankSelectControl, bankBrand } from './bank-logo';
 import { HistoryPanel } from './history';
 import { ImportReportView } from './import-report';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -67,7 +68,7 @@ export function Reports() {
   const chosen=catRows.find(c=>(c.id??'_none')===category),top=detailsReady?s?.topEntries?.[dir]??[]:[];
   return <div ref={root} style={{overflowAnchor:'none'}}>
     <h1>Отчёты</h1>
-    {!!financialProfile?.profile?.accounts.length&&<Field label="Счёт отчёта"><select aria-label="Счёт отчёта" value={selectedAccount??''} onChange={e=>{setS(null);setCategory(null);setState({selectedAccount:e.target.value||null});}}><option value="">Все счета</option>{financialProfile.profile.accounts.map(a=><option key={a.id} value={a.id}>{a.bank} · {a.name}</option>)}</select></Field>}
+    {!!financialProfile?.profile?.accounts.length&&<Field label="Счёт отчёта"><BankSelectControl account={financialProfile.profile.accounts.find(a=>a.id===selectedAccount)}><select aria-label="Счёт отчёта" value={selectedAccount??''} onChange={e=>{setS(null);setCategory(null);setState({selectedAccount:e.target.value||null});}}><option value="">Все счета</option>{financialProfile.profile.accounts.map(a=><option key={a.id} value={a.id}>{a.bank} · {a.name}</option>)}</select></BankSelectControl></Field>}
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
       <button className="btn small sec" aria-label="Предыдущий месяц" onClick={() => {setCategory(null);setMonth(shiftMonth(month, -1));}}>‹</button>
       <strong>{monthLabel(month).replace(/^./, c => c.toUpperCase()).replace(/ г\.$/, '')}</strong>
@@ -262,7 +263,16 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
   const [account,setAccount]=useState(selectedAccount??'');
   const importAccount=financialProfile?.profile?.accounts.find(a=>a.id===account);
   const [profiles, setProfiles] = useState<Array<{id: string; title: string; ready: boolean}>>([]);
-  const [bank, setBank] = useState(()=>{const preferred=financialProfile?.profile?.accounts.find(a=>a.id===selectedAccount)?.bank.toLowerCase();return ['kaspi','halyk','freedom'].find(b=>preferred?.includes(b))??financialProfile?.profile?.accounts.map(a=>a.bank.toLowerCase()).find(b=>['kaspi','halyk','freedom'].includes(b))??'kaspi';});
+  const [bank, setBank] = useState<string>(() => {
+    const accounts = financialProfile?.profile?.accounts ?? [];
+    for (const a of [importAccount, ...accounts]) {
+      if (!a) continue;
+      const brand = bankBrand(a.bank, a.kind);
+      if (brand === 'kaspi' || brand === 'halyk' || brand === 'freedom') return brand;
+      if (a === importAccount && brand === 'forte') return 'generic';
+    }
+    return 'kaspi';
+  });
   useEffect(() => { api('GET', '/api/import/profiles').then(r => setProfiles(r.profiles)).catch(e => setErr(e.message)); }, []);
   const [file, setFile] = useState<{ name: string; text: string; header: string[]; delim: string; pdfBase64?: string } | null>(null);
   const [m, setM] = useState<{ date: number; amount: number; cp: number; note: number; mode: 'signed' | 'split' | 'dir'; debit: number; credit: number; dirCol: number; inV: string; outV: string }>({ date: 0, amount: 1, cp: -1, note: -1, mode: 'signed', debit: -1, credit: -1, dirCol: -1, inV: '', outV: '' });
@@ -292,7 +302,7 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
   }
   const body = (dryRun: boolean) => ({ financialAccountId:account||null,accountLogin:getState().login,bank, pdfBase64: file!.pdfBase64, csv: file!.text, filename: file!.name, dryRun, mapping: { delimiter: file!.delim, hasHeader: true, dateCol: m.date, counterpartyCol: m.cp >= 0 ? m.cp : undefined, noteCol: m.note >= 0 ? m.note : undefined,
     ...(m.mode === 'signed' ? { amountCol: m.amount } : m.mode === 'split' ? { debitCol: m.debit >= 0 ? m.debit : undefined, creditCol: m.credit >= 0 ? m.credit : undefined } : { amountCol: m.amount, directionCol: m.dirCol, inValues: m.inV.split(',').map(s => s.trim()).filter(Boolean), outValues: m.outV.split(',').map(s => s.trim()).filter(Boolean) }) } });
-  async function run(dry: boolean) { if(importing.current)return;importing.current=true;setState({activeImports:getState().activeImports+1});setConfirmImport(false);setBusy(true); setErr(''); try { const r = await api('POST', '/api/import', body(dry)); setRep({...r,mappingSnapshot:JSON.stringify(m)}); if (!dry) { bump(); onImported?.(r.imported); } } catch (e) { setErr((e as ApiError).message); } finally { importing.current=false;setState({activeImports:Math.max(0,getState().activeImports-1)});setBusy(false); } }
+  async function run(dry: boolean) { if(importing.current)return;importing.current=true;setState({activeImports:getState().activeImports+1});setConfirmImport(false);setBusy(true); setErr(''); try { const r = await api('POST', '/api/import', body(dry)); setRep({...r,source:bank,mappingSnapshot:JSON.stringify(m)}); if (!dry) { bump(); onImported?.(r.imported); } } catch (e) { setErr((e as ApiError).message); } finally { importing.current=false;setState({activeImports:Math.max(0,getState().activeImports-1)});setBusy(false); } }
   const sel = (label: string, key: 'date' | 'amount' | 'cp' | 'note' | 'debit' | 'credit' | 'dirCol', optional = false) => <Field label={label}><select disabled={busy} aria-label={label} value={m[key]} onChange={e => setM({ ...m, [key]: Number(e.target.value) })}>{optional && <option value={-1}>— нет —</option>}{file!.header.map((h, i) => <option key={i} value={i}>{h || `Колонка ${i + 1}`}</option>)}</select></Field>;
   return <>
     <div className="screen-kicker">ИМПОРТ ОПЕРАЦИЙ</div><h1>Выписка</h1><div className="import-hero" aria-hidden="true">↥</div>
@@ -304,7 +314,7 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
       <div className="bank-cards">{['halyk','kaspi','freedom'].map(id=>{
         const profile=profiles.find(p=>p.id===id&&p.ready);if(!profile)return null;
         const title=id==='halyk'?'Halyk':id==='kaspi'?'Kaspi':'Freedom';
-        return <label key={id} className={'bank-card '+id+(bank===id?' selected':'')}><input type="radio" name="statement-bank" aria-label={title+' PDF'} value={id} checked={bank===id} onChange={()=>{readGeneration.current++;setBank(id);setFile(null);setRep(null);setErr('');}}/><span className="bank-mark" aria-hidden="true">{title[0]}</span><strong>{title}</strong><small>PDF</small></label>;
+        return <label key={id} className={'bank-card '+id+(bank===id?' selected':'')}><input type="radio" name="statement-bank" aria-label={title+' PDF'} value={id} checked={bank===id} onChange={()=>{readGeneration.current++;setBank(id);setFile(null);setRep(null);setErr('');}}/><BankLogo bank={title} size={36}/><strong>{title}</strong><small>PDF</small></label>;
       })}</div>
       <label className="generic-format"><input type="radio" name="statement-bank" aria-label="Универсальный CSV" checked={bank==='generic'} onChange={()=>{readGeneration.current++;setBank('generic');setFile(null);setRep(null);setErr('');}}/>Универсальный CSV</label>
     </fieldset>
@@ -324,6 +334,6 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
     {busy && <div className="parsing-state" role="status"><span className="spinner"/>Разбираем файл и проверяем операции…</div>}
     {rep&&<ImportReportView report={rep} onViewFeed={onViewFeed}/>}
     <HistoryPanel disabled={busy||confirmImport} onOpen={r=>{readGeneration.current++;setFile(null);setRep(r);}} onChanged={()=>{readGeneration.current++;setFile(null);setRep(null);}}/>
-    {confirmImport&&file&&<Sheet title="Подтвердить импорт" onClose={()=>setConfirmImport(false)}><p style={{overflowWrap:'anywhere'}}>Файл: {file.name}</p><p>Банк: {bank==='generic'?'Универсальный CSV':profiles.find(p=>p.id===bank)?.title??bank}</p><p>Счёт: {importAccount?importAccount.bank+' · '+importAccount.name:'Без счёта'}</p><p>Операции будут добавлены в вашу историю. Проверьте файл и банк. Загрузку можно откатить через историю импортов.</p>{rep?.dryRun&&rep.mappingSnapshot===JSON.stringify(m)&&<p>Будет добавлено: {rep.imported}; повторы: {rep.duplicates}; отклонено: {rep.rejected}; служебных: {rep.service}.</p>}<div style={{display:'flex',gap:8}}><button className="btn sec" onClick={()=>setConfirmImport(false)}>Отмена</button><button className="btn" onClick={()=>run(false)}>Подтвердить импорт</button></div></Sheet>}
+    {confirmImport&&file&&<Sheet title="Подтвердить импорт" onClose={()=>setConfirmImport(false)}><p style={{overflowWrap:'anywhere'}}>Файл: {file.name}</p><p className="bank-inline">{bank!=='generic'&&<BankLogo bank={bank} size={28}/>}Банк: {bank==='generic'?'Универсальный CSV':profiles.find(p=>p.id===bank)?.title??bank}</p><p className="bank-inline">{importAccount&&<BankLogo {...importAccount} size={28}/>}Счёт: {importAccount?importAccount.bank+' · '+importAccount.name:'Без счёта'}</p><p>Операции будут добавлены в вашу историю. Проверьте файл и банк. Загрузку можно откатить через историю импортов.</p>{rep?.dryRun&&rep.mappingSnapshot===JSON.stringify(m)&&<p>Будет добавлено: {rep.imported}; повторы: {rep.duplicates}; отклонено: {rep.rejected}; служебных: {rep.service}.</p>}<div style={{display:'flex',gap:8}}><button className="btn sec" onClick={()=>setConfirmImport(false)}>Отмена</button><button className="btn" onClick={()=>run(false)}>Подтвердить импорт</button></div></Sheet>}
   </>;
 }
