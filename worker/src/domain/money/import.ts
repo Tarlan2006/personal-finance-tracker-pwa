@@ -112,7 +112,11 @@ export async function runImport(store: Store, accountId: string, input: { financ
   const meta = await loadMeta(store, accountId);
   const report: ImportReport = { total: parsed.length, imported: 0, duplicates: 0, rejected: 0,service:0, dryRun: !!input.dryRun, batchId: null, rows: [], newCounterparties: [] };
   const good = parsed.filter(p => p.payload);
-  const keys = await Promise.all(good.map(async p => ({ p, id: uuid(), key: await sha256(`${accountId}|${p.key}`) })));
+  const keys = await Promise.all(good.map(async p => {
+    const fingerprint = await sha256(accountId + '|' + p.key);
+    const key = input.financialAccountId ? fingerprint + ':' + input.financialAccountId : fingerprint;
+    return {p, id:uuid(), key};
+  }));
   const batchId = uuid();
   const candidates = new Map(keys.map(c => [c.p.line, c.id]));
   const sourceRows = parsed.map(p => ({ line: p.line, status: p.service?'service':p.reject ? 'rejected' : 'duplicate',
