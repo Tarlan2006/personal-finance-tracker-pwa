@@ -13,6 +13,7 @@ export async function measureSession() {
   await rec('GET /api/financial-profile', call(env,'GET','/api/financial-profile',{cookie}));
   await rec('PUT /api/financial-profile', call(env,'PUT','/api/financial-profile',{cookie,body:{version:0,status:'deferred',profile:{balanceDate:'2026-11-01',accounts:[],expenseCategoryIds:[],monthlyBudgetMinor:null,incomes:[],obligations:[],householdSize:1,goal:'',goalTargetMinor:null,monthlySavingMinor:null}}}));
   await rec('GET /api/entries (лента, 100)', call(env, 'GET', '/api/entries', { cookie }));
+  await rec('GET /api/wallet', call(env, 'GET', '/api/wallet', { cookie }));
   await rec('POST /api/entries (добавить)', call(env, 'POST', '/api/entries', { cookie, body: { id: 'ops-entry-0001', direction: 'out', amountMinor: 150000, counterparty: 'Magnum' } }));
   await rec('POST /api/entries (повтор, дубль)', call(env, 'POST', '/api/entries', { cookie, body: { id: 'ops-entry-0001', direction: 'out', amountMinor: 150000, counterparty: 'Magnum' } }));
   await rec('GET /api/reports/summary', call(env, 'GET', '/api/reports/summary', { cookie }));

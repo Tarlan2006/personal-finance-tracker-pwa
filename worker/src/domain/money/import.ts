@@ -4,7 +4,7 @@ import { MAX_IMPORT_ROWS, MAX_IMPORT_REPORT_BYTES, MAX_IMPORT_REASON_CHARS } fro
 import { bankPdf } from './bank-pdf';
 import { parseCsv } from './csv';
 import { normName, parseAmountMinor, parseDateMs } from './normalize';
-import { insertStatements, normalizeTx } from './entries';
+import { assertFinancialAccount, insertStatements, normalizeTx } from './entries';
 import { loadMeta } from './meta';
 import { MAX_NOTE_LENGTH, type TxPayload } from '../../../../shared/types';
 import { LEGACY_SERVICE_REASON, presentImportReport, type RowStatus, type ImportRow } from '../../../../shared/import-report';
@@ -94,8 +94,9 @@ export function parseRows(csv: string, m: Mapping): { parsed: Parsed[]; headerLi
 }
 
 /** imported + duplicates + rejected + service === total; every row is accounted for. */
-export async function runImport(store: Store, accountId: string, input: { csv?: string; pdfBase64?: string; bank?: string; filename?: string; mapping?: Mapping; dryRun?: boolean }): Promise<ImportReport> {
+export async function runImport(store: Store, accountId: string, input: { financialAccountId?: string | null; csv?: string; pdfBase64?: string; bank?: string; filename?: string; mapping?: Mapping; dryRun?: boolean }): Promise<ImportReport> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'bad_import', 'Нужен объект параметров импорта');
+  if (input.financialAccountId != null && input.financialAccountId !== '') await assertFinancialAccount(store, accountId, input.financialAccountId);
   for(const key of ['csv','pdfBase64','bank','filename'] as const)if(input[key]!==undefined&&typeof input[key]!=='string')throw new HttpError(400,'bad_import','Некорректные параметры файла');
   if(input.dryRun!==undefined&&typeof input.dryRun!=='boolean')throw new HttpError(400,'bad_import','dryRun должен быть логическим значением');
   const bank = input.bank ?? input.mapping?.bank ?? 'generic';
@@ -106,6 +107,7 @@ export async function runImport(store: Store, accountId: string, input: { csv?: 
   if (new TextEncoder().encode(csv).length > 3 * 1024 * 1024) throw new HttpError(413, 'file_too_large', 'Файл слишком большой');
   const mapping = bank === 'halyk' ? { bank, delimiter: ';', rejectionCol: 6, serviceCol:7,dateCol: 0, creditCol: 4, debitCol: 5, counterpartyCol: 2, noteCol: 3 } : bank !== 'generic' ? { bank, delimiter: ';', rejectionCol: 6,serviceCol:7, dateCol: 0, amountCol: 1, counterpartyCol: 2, noteCol: 3 } : {...input.mapping,serviceCol:undefined} as Mapping;
   const { parsed } = parseRows(csv, mapping);
+  for (const row of parsed) if (row.payload && input.financialAccountId) row.payload.financialAccountId = input.financialAccountId;
   // All fallible reads/preparation happen before the financial transaction.
   const meta = await loadMeta(store, accountId);
   const report: ImportReport = { total: parsed.length, imported: 0, duplicates: 0, rejected: 0,service:0, dryRun: !!input.dryRun, batchId: null, rows: [], newCounterparties: [] };

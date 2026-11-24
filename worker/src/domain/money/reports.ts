@@ -11,22 +11,29 @@ interface CounterpartyAgg extends Agg {
   uncategorizedCount: number;
 }
 function add(a:number,b:number){const result=a+b;if(!Number.isSafeInteger(result))throw new HttpError(422,'total_too_large','Итог месяца превышает точный денежный диапазон; проверьте суммы операций');return result;}
-export async function monthlySummary(store: Store, accountId: string, month: string) {
+export async function monthlySummary(store: Store, accountId: string, month: string, query = new URLSearchParams()) {
   const { from, to } = monthRange(month);
-  const rows = await store.all<{ payload_json: string }>(
-    'SELECT payload_json FROM entries WHERE account_id = ? AND kind = ? AND deleted_at IS NULL AND occurred_at >= ? AND occurred_at < ?', accountId, KIND_TX, from, to);
+  const rows = await store.all<{ id: string; occurred_at: number; payload_json: string }>(
+    'SELECT id, occurred_at, payload_json FROM entries WHERE account_id = ? AND kind = ? AND deleted_at IS NULL AND occurred_at >= ? AND occurred_at < ?', accountId, KIND_TX, from, to);
   const meta = await loadMeta(store, accountId);
+  const selectedCategory = query.get('category');
+  const top: Record<'in'|'out', Array<{id: string; occurredAt: number; amountMinor: number; counterparty: string; note: string; categoryId: string|null}>> = {in: [], out: []};
   const totals = { in: 0, out: 0, count: 0 };
   const cat = { in: new Map<string, Agg>(), out: new Map<string, Agg>() };
   const cp = { in: new Map<string, CounterpartyAgg>(), out: new Map<string, CounterpartyAgg>() };
   let uncat = { count: 0, sum: 0 };
   for (const r of rows) {
     const p = JSON.parse(r.payload_json) as TxPayload;
+    if (query.has('financialAccountId') && (p.financialAccountId ?? '') !== query.get('financialAccountId')) continue;
     totals[p.direction] = add(totals[p.direction],p.amountMinor); totals.count++;
     const cid = effectiveCategory(meta, p);
     const key = cid ?? '_none';
     const a = cat[p.direction].get(key) ?? { sum: 0, count: 0 }; a.sum = add(a.sum,p.amountMinor); a.count++; cat[p.direction].set(key, a);
     if (!cid) { uncat.count++; uncat.sum = add(uncat.sum,p.amountMinor); }
+    if (selectedCategory !== null && key !== selectedCategory) continue;
+    top[p.direction].push({ id: r.id, occurredAt: r.occurred_at, amountMinor: p.amountMinor, counterparty: p.counterparty, note: p.note ?? '', categoryId: cid });
+    top[p.direction].sort((a,b)=>b.amountMinor-a.amountMinor || b.occurredAt-a.occurredAt || a.id.localeCompare(b.id));
+    if (top[p.direction].length > 10) top[p.direction].pop();
     const nk = normName(p.counterparty) || '_none';
     const c = cp[p.direction].get(nk) ?? {
       sum: 0, count: 0, display: p.counterparty || 'Без контрагента', effectiveCategoryId: cid, uncategorizedCount: 0,
@@ -45,6 +52,7 @@ export async function monthlySummary(store: Store, accountId: string, month: str
     categoryId: (d === 'in' ? meta.cpIn : meta.cpOut).get(norm) ?? null,
   })).sort((x, y) => y.sum - x.sum);
   return {
+    selectedCategory, topEntries: top,
     month, totals: { in: totals.in, out: totals.out, net: totals.in - totals.out, count: totals.count },
     byCategory: { out: catList('out'), in: catList('in') },
     byCounterparty: { out: cpList('out'), in: cpList('in') },

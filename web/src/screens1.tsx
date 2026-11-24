@@ -2,8 +2,9 @@ import { MAX_NOTE_LENGTH, type EntryDTO as Entry } from '../../shared/types';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { shiftDocumentScroll } from './scroll-lock';
 import { EntryCard } from './entry-card';
+import { Wallet, AccountSelect } from './wallet';
 import { api, ApiError } from './api';
-import { enqueue, listQueue, removeFromQueue, startQueue, sealQueue, unsealQueue, subscribeQueue, getQueueStatus, type QItem } from './queue';
+import { enqueue, flush, listQueue, removeFromQueue, startQueue, sealQueue, unsealQueue, subscribeQueue, getQueueStatus, type QItem } from './queue';
 import { Field, Sheet, bump, dayLabel, fmt, getState, loadCats, setState, todayStr, useAppState, catMap, Icons, inputMinor, normName, thisMonth, monthLabel, type Cat, useAction } from './ui';
 
 // ---------- Вход ----------
@@ -73,11 +74,11 @@ function matchesFilter(entry: Entry, filter: FeedFilter) {
 export function Feed({ onImport }: {onImport:()=>void}) {
   const pendingAction=useAction();
   const queueStatus=useSyncExternalStore(subscribeQueue,getQueueStatus);
-  const { cats, login, version } = useAppState(); const cm = useMemo(() => catMap(cats), [cats]);
+  const { cats, login, version, selectedAccount, financialProfile } = useAppState(); const cm = useMemo(() => catMap(cats), [cats]);
   const [items, setItems] = useState<Entry[]>([]); const [next, setNext] = useState<any>(null); const [q, setQ] = useState('');
   const [filter,setFilter]=useState<FeedFilter>('all');
   const [summary,setSummary]=useState<{in:number;out:number;net:number}|null>(null);
-  useEffect(()=>{let active=true;api('GET','/api/reports/summary?month='+thisMonth()).then(r=>{if(active)setSummary(r.totals);}).catch(()=>{});return ()=>{active=false;};},[version,queueStatus.count]);
+  useEffect(()=>{let active=true;setSummary(null);api('GET','/api/reports/summary?month='+thisMonth()+(selectedAccount?'&financialAccountId='+encodeURIComponent(selectedAccount):'')).then(r=>{if(active)setSummary(r.totals);}).catch(()=>{});return ()=>{active=false;};},[version,queueStatus.count,selectedAccount]);
   const [pending, setPending] = useState<QItem[]>([]); const [err, setErr] = useState(''); const [edit, setEdit] = useState<Entry | null>(null); const [loading, setLoading] = useState(true);
   const [refreshHeight,setRefreshHeight]=useState<number>();
   const [selecting,setSelecting]=useState(false),[selected,setSelected]=useState<Set<string>>(new Set());
@@ -112,12 +113,12 @@ export function Feed({ onImport }: {onImport:()=>void}) {
     setSelecting(true);setSelected(prev=>{const n=new Set(prev);if(n.has(id))n.delete(id);else if(n.size<1000)n.add(id);return n;});
   }
   function cancelSelection(){if(deletingRef.current)return;setSelecting(false);setSelected(new Set());setConfirmDelete(false);setDeleteErr('');}
-  useEffect(()=>{cancelSelection();},[q,filter]);
+  useEffect(()=>{cancelSelection();},[q,filter,selectedAccount]);
   useEffect(()=>{const key=(e:KeyboardEvent)=>{if(e.key==='Escape'&&!confirmDelete)cancelSelection();};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[confirmDelete]);
   const load = useCallback(async (append = false) => {
     if(deletingRef.current)return;
     const current=++generation.current;setLoading(true);
-    const key=JSON.stringify([q,filter]);const same=shownQuery.current===key;
+    const key=JSON.stringify([q,filter,selectedAccount]);const same=shownQuery.current===key;
     if(!same){depth.current=50;setItems([]);}
     try {
       let cursor=append?next:null;
@@ -125,6 +126,7 @@ export function Feed({ onImport }: {onImport:()=>void}) {
       const target=append?1:same?depth.current:1;
       do {
         const p=new URLSearchParams({limit:'50'});if(q)p.set('q',q);
+        if(selectedAccount)p.set('financialAccountId',selectedAccount);
         if(cursor){p.set('beforeTime',cursor.beforeTime);p.set('beforeId',cursor.beforeId);}
         const r=await api('GET','/api/entries?'+p);
         if(current!==generation.current)return;
@@ -137,7 +139,7 @@ export function Feed({ onImport }: {onImport:()=>void}) {
       setItems(result);setNext(following);setRefreshHeight(undefined);setErr('');
     }catch(e){if(current===generation.current){remember(itemsRef.current);setRefreshHeight(undefined);setErr((e as Error).message);}}
     finally{if(current===generation.current)setLoading(false);}
-  },[q,next,filter]);
+  },[q,next,filter,selectedAccount]);
   async function removeSelected(){
     if(deletingRef.current||!selected.size)return;
     deletingRef.current=true;setDeleting(true);setDeleteErr('');generation.current++;
@@ -153,11 +155,13 @@ export function Feed({ onImport }: {onImport:()=>void}) {
     }catch(e){if(getState().login===accountLogin)setDeleteErr((e as Error).message+' Если ответ потерян, повторное удаление безопасно.');}
     finally{deletingRef.current=false;setDeleting(false);setLoading(false);}
   }
-  useEffect(()=>{const t=setTimeout(()=>load(false),q?250:0);return ()=>{clearTimeout(t);generation.current++;};},[q,version,filter,queueStatus.count]);
-  useEffect(() => { let active=true;if (login) listQueue(login).then(r=>{if(active)setPending(r);}).catch(()=>{if(active)setPending(previous=>previous.filter(item=>item.login===login));});return ()=>{active=false;}; }, [login, version, items, queueStatus.count, queueStatus.failed, queueStatus.lastResult]);
-  const groups = useMemo(() => { const g = new Map<string, Entry[]>(); for (const e of items) { if (!matchesFilter(e, filter)) continue; const k = dayLabel(e.occurredAt); (g.get(k) ?? g.set(k, []).get(k)!).push(e); } return [...g]; }, [items,filter]);
+  useEffect(()=>{const t=setTimeout(()=>load(false),q?250:0);return ()=>{clearTimeout(t);generation.current++;};},[q,version,filter,queueStatus.count,selectedAccount]);
+  useEffect(() => { let active=true;if (login) listQueue(login).then(r=>{if(active)setPending(r);}).catch(()=>{if(active)setPending(previous=>previous.filter(item=>item.login===login));});return ()=>{active=false;}; }, [login, version, items, queueStatus.count, queueStatus.failed, queueStatus.lastResult, queueStatus.storageError]);
+  const groups = useMemo(() => { const g = new Map<string, Entry[]>(); for (const e of items) { if (!matchesFilter(e, filter) || selectedAccount && e.payload.financialAccountId !== selectedAccount) continue; const k = dayLabel(e.occurredAt); (g.get(k) ?? g.set(k, []).get(k)!).push(e); } return [...g]; }, [items,filter,selectedAccount]);
+  const visiblePending=pending.filter(p=>!selectedAccount||p.payload.financialAccountId===selectedAccount);
   return <div ref={root} style={{overflowAnchor:'none',minHeight:refreshHeight}}>
     <header className={'feed-heading'+(items.length?' with-selection':'')}><div><div className="screen-kicker">QARJY · ВАШИ ФИНАНСЫ</div><h1>Лента</h1></div><button className="header-import" aria-label="Загрузить выписку" onClick={onImport}>{Icons.upload}</button></header>
+    <Wallet queueCount={queueStatus.count} disabled={deleting}/>
     {items.length>0&&<button className="btn small sec feed-select" style={{visibility:selecting?'hidden':undefined}} onClick={()=>setSelecting(true)}>Выбрать операции</button>}
     {selecting&&<div className="selection-bar" role="region" aria-label="Выбор операций">
       <span role="status">Выбрано: {selected.size}</span><button className="btn small sec" disabled={deleting} onClick={cancelSelection}>Отмена</button>
@@ -169,24 +173,26 @@ export function Feed({ onImport }: {onImport:()=>void}) {
       <button className="btn danger" disabled={deleting} onClick={removeSelected}>{deleting?'Удаляем…':'Удалить выбранные'}</button>
       <button className="btn sec" disabled={deleting} onClick={()=>setConfirmDelete(false)}>Отмена</button>
     </Sheet>}
-    {queueStatus.lastResult==='Локальное хранилище недоступно'&&<div className="banner" role="alert">Локальное хранилище недоступно. Новые операции нельзя сохранить на этом устройстве.</div>}
+    {queueStatus.storageError&&<div className="banner"><div role="alert">Локальное хранилище недоступно. Для сохранения новых операций нужно подключение к интернету.</div>
+      {queueStatus.storageError==='read'&&login&&<button type="button" className="text-action" onClick={()=>void flush(login)}>Проверить хранилище снова</button>}
+    </div>}
     <div className="spotlight">{Icons.search}<input disabled={deleting} aria-label="Поиск" type="search" placeholder="Поиск по получателю и заметке" value={q} onChange={e => setQ(e.target.value)}  /></div>
     <div className="filter-pills" aria-label="Фильтры операций">{([['all','Все'],['out','Расходы'],['in','Доходы'],['auto','Авто-правила']] as const).map(([key,label])=><button disabled={deleting} key={key} aria-pressed={filter===key} className={filter===key?'active':''} onClick={()=>setFilter(key)}>{label}</button>)}</div>
-    <section className="balance-card" aria-label="Сводка за месяц"><div className="balance-label">Баланс · {monthLabel(thisMonth()).replace(/ г\.$/,'')}</div><div className="balance-value" style={{color:summary?.net?summary.net>0?'var(--green)':'var(--red)':undefined}}>{summary ? fmt(summary.net) : '— ₸'}</div><div className="balance-split"><div><span><i className="flow-dot in"/>Доходы</span><strong>{summary?fmt(summary.in):'—'}</strong></div><div><span><i className="flow-dot out"/>Расходы</span><strong>{summary?fmt(summary.out):'—'}</strong></div></div>{pending.length>0&&<small className="muted">Без ожидающих отправки</small>}</section>
+    <section className="balance-card" aria-label="Сводка за месяц"><div className="balance-label">Баланс · {monthLabel(thisMonth()).replace(/ г\.$/,'')}</div><div className="balance-value" style={{color:summary?.net?summary.net>0?'var(--green)':'var(--red)':undefined}}>{summary ? fmt(summary.net) : '— ₸'}</div><div className="balance-split"><div><span><i className="flow-dot in"/>Доходы</span><strong>{summary?fmt(summary.in):'—'}</strong></div><div><span><i className="flow-dot out"/>Расходы</span><strong>{summary?fmt(summary.out):'—'}</strong></div></div>{visiblePending.length>0&&<small className="muted">Без ожидающих отправки</small>}</section>
     {err && <div className="banner" role="alert">{err}</div>}
     {pendingAction.error&&<div className="err" role="alert">{pendingAction.error}</div>}
-    {pending.length > 0 && <><h2>Ждут отправки ({pending.length})</h2><div className="group">{pending.map(p => <div className="row" key={p.id}>
+    {visiblePending.length > 0 && <><h2>Ждут отправки ({visiblePending.length})</h2><div className="group">{visiblePending.map(p => <div className="row" key={p.id}>
       <div className="grow"><div className="ell">{p.payload.counterparty || 'Без получателя'}</div><div className="sub">{p.status === 'failed' ? `Не принято: ${p.lastError}` : 'Отправится при появлении сети'}</div></div>
       <span className={'amt ' + p.payload.direction}>{p.payload.direction === 'in' ? '+' : '−'}{fmt(p.payload.amountMinor)}</span>
       {p.status === 'failed' && <button className="btn small danger" disabled={pendingAction.busy} onClick={()=>pendingAction.run(async()=>{await removeFromQueue(p.login,p.id);bump();})}>Убрать</button>}
     </div>)}</div></>}
-    {!loading && !items.length && !pending.length && filter==='all' && !q && <div className="empty">Пока нет записей.<br />Добавьте первую операцию кнопкой «+»<br/>или загрузите выписку.<button className="btn" onClick={onImport}>Загрузить выписку</button></div>}
+    {!loading && !items.length && !visiblePending.length && filter==='all' && !q && <div className="empty">Пока нет записей.<br />Добавьте первую операцию кнопкой «+»<br/>или загрузите выписку.<button className="btn" onClick={onImport}>Загрузить выписку</button></div>}
     {!loading && !groups.length && (filter!=='all'||!!q) && <div className="empty">{q?'Ничего не найдено':'Нет операций по выбранному фильтру'}</div>}
     {groups.map(([day, list]) => <section className="day-section" key={day}><h2>{day}</h2><div className="group">{list.map(e => {
-      const c = cm.get(e.effectiveCategoryId ?? ''); const p = e.payload;
+      const c = cm.get(e.effectiveCategoryId ?? ''); const p = e.payload;const account=financialProfile?.profile?.accounts.find(a=>a.id===p.financialAccountId);
       return <EntryCard key={e.id} id={e.id} selecting={selecting} selected={selected.has(e.id)} disabled={deleting||selecting&&selected.size>=1000&&!selected.has(e.id)} onSelect={()=>toggle(e.id)} onOpen={()=>setEdit(e)} label={`${p.counterparty || 'Без получателя'} ${fmt(p.amountMinor)}`}>
         <span className="merchant-icon" style={{color:c?.color??'var(--accent)',background:c?.color?c.color+'20':undefined}} aria-hidden="true">{p.direction==='in'?'↙':(p.counterparty||'₸').slice(0,1).toUpperCase()}</span>
-        <div className="grow"><div className="ell">{p.counterparty || p.note || 'Без получателя'}</div><div className="sub ell">{c ? c.name : <span className="chip warn">без категории</span>}{!p.categoryId&&c&&<span className="auto-mark" title="Категория по привязке или правилу"> · авто</span>}{p.note && p.counterparty ? ' · ' + p.note : ''}</div></div>
+        <div className="grow"><div className="ell">{p.counterparty || p.note || 'Без получателя'}</div><div className="sub ell">{c ? c.name : <span className="chip warn">без категории</span>}{!p.categoryId&&c&&<span className="auto-mark" title="Категория по привязке или правилу"> · авто</span>}{p.note && p.counterparty ? ' · ' + p.note : ''}</div>{account&&<div className="sub ell">{account.bank} · {account.name}</div>}</div>
         <span className={'amt ' + p.direction}>{p.direction === 'in' ? '+' : '−'}{fmt(p.amountMinor)}</span>
       </EntryCard>;
     })}</div></section>)}
@@ -199,12 +205,13 @@ export function Feed({ onImport }: {onImport:()=>void}) {
 function EditSheet({ e, cats, onSaved, onClose }: { e: Entry; cats: Cat[]; onSaved: (entry: Entry) => void; onClose: () => void }) {
   const action=useAction();
   const p = e.payload;
+  const [account,setAccount]=useState(p.financialAccountId??'');
   const [dir, setDir] = useState(p.direction); const [amount, setAmount] = useState(String(p.amountMinor / 100)); const [cp, setCp] = useState(p.counterparty);
   const [cat, setCat] = useState(p.categoryId ?? ''); const [note, setNote] = useState(p.note ?? ''); const [date, setDate] = useState(new Date(e.occurredAt + 5 * 3600e3).toISOString().slice(0, 10));
   const opts = cats.filter(c => c.type === (dir === 'in' ? 'income' : 'expense'));
   const save = () => action.run(async () => {
     const { entry } = await api<{ entry: Entry }>('PATCH', `/api/entries/${e.id}`, {
-      version: e.version, direction: dir, amount, counterparty: cp, categoryId: cat || null, note,
+      version: e.version, direction: dir, amount, counterparty: cp, categoryId: cat || null, note, financialAccountId:account||null,
       occurredAt: date === new Date(e.occurredAt + 5 * 3600e3).toISOString().slice(0, 10) ? e.occurredAt : date,
     });
     onSaved(entry);
@@ -213,6 +220,7 @@ function EditSheet({ e, cats, onSaved, onClose }: { e: Entry; cats: Cat[]; onSav
   return <Sheet title="Запись" onClose={onClose} busy={action.busy}>
     <div className="seg"><button disabled={action.busy} className={dir === 'out' ? 'on' : ''} onClick={() => { setDir('out'); setCat(''); }}>Расход</button><button disabled={action.busy} className={dir === 'in' ? 'on' : ''} onClick={() => { setDir('in'); setCat(''); }}>Доход</button></div>
     <Field label="Сумма, ₸"><input disabled={action.busy} aria-label="Сумма" inputMode="decimal" value={amount} onChange={x => setAmount(x.target.value)} /></Field>
+    <AccountSelect value={account} onChange={setAccount} disabled={action.busy}/>
     <Field label="Получатель / отправитель"><input disabled={action.busy} aria-label="Получатель" value={cp} onChange={x => setCp(x.target.value)} /></Field>
     <Field label="Категория"><select disabled={action.busy} aria-label="Категория" value={cat} onChange={x => setCat(x.target.value)}><option value="">Автоматически (по получателю)</option>{opts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
     <Field label="Дата"><input disabled={action.busy} aria-label="Дата" type="date" value={date} onChange={x => setDate(x.target.value)} /></Field>
@@ -227,9 +235,14 @@ function EditSheet({ e, cats, onSaved, onClose }: { e: Entry; cats: Cat[]; onSav
 export function Add({ onDone, onBusyChange }: { onDone: () => void; onBusyChange?:(busy:boolean)=>void }) {
   const active=useRef(true);useEffect(()=>()=>{active.current=false;},[]);
   const saving=useRef(false);
-  const {cats,login,financialProfile}=useAppState();
+  const {cats,login,financialProfile,selectedAccount}=useAppState();
+  const [account,setAccount]=useState(selectedAccount??'');
   const [dir,setDir]=useState<'out'|'in'>('out'), [amount,setAmount]=useState(''), [cp,setCp]=useState(''),[cat,setCat]=useState('');
   const [note,setNote]=useState(''),[date,setDate]=useState(todayStr()),[err,setErr]=useState(''),[busy,setBusy]=useState(false);
+  const [retryEntry, setRetryEntry] = useState<{
+    id: string; direction: 'in' | 'out'; amountMinor: number; counterparty: string;
+    categoryId: string | null; note: string; occurredAt: number | string; financialAccountId: string|null;
+  } | null>(null);
   const [counterparties,setCounterparties]=useState<Array<{display:string;name_norm:string;category_out_id:string|null;category_in_id:string|null}>>([]);
   const [rules,setRules]=useState<Array<{pattern:string;direction:string;categoryId:string}>>([]);
   useEffect(()=>{let active=true;Promise.allSettled([
@@ -244,20 +257,43 @@ export function Add({ onDone, onBusyChange }: { onDone: () => void; onBusyChange
   const rule=rules.find(r=>(r.direction==='any'||r.direction===dir)&&normName(r.pattern)&&hay.includes(normName(r.pattern))&&opts.some(c=>c.id===r.categoryId));
   const auto=bound??opts.find(c=>c.id===rule?.categoryId);
   async function save(e:React.FormEvent) {
-    e.preventDefault();if(saving.current)return;setErr('');const minor=inputMinor(amount);
+    e.preventDefault();if(saving.current||!login)return;setErr('');const minor=inputMinor(amount);
     if(minor===null||minor<=0){setErr('Введите сумму больше нуля, не более двух знаков после запятой');return;}
+    const entry = retryEntry ?? {id:crypto.randomUUID(),direction:dir,amountMinor:minor,counterparty:cp.trim(),categoryId:cat||null,note:note.trim(),occurredAt:date===todayStr()?Date.now():date,financialAccountId:account||null};
     saving.current=true;setBusy(true);onBusyChange?.(true);
-    try{
-      await enqueue(login!,{id:crypto.randomUUID(),direction:dir,amountMinor:minor,counterparty:cp.trim(),categoryId:cat||null,note:note.trim(),occurredAt:date===todayStr()?Date.now():date});
-      bump();if(active.current)onDone();
-    }catch{saving.current=false;if(active.current){setErr('Не удалось сохранить на устройстве. Попробуйте ещё раз');setBusy(false);}}finally{onBusyChange?.(false);}
+    try {
+      const queued = !retryEntry && await enqueue(login, entry).then(() => true, () => false);
+      if (!active.current || getState().login !== login) return;
+      if (!queued) {
+        if (!navigator.onLine) {
+          setErr('Нет подключения к интернету, а локальное хранилище недоступно. Подключитесь к сети и повторите сохранение.');
+          return;
+        }
+        const result = await api<{ entry?: Entry }>('POST', '/api/entries', { ...entry, accountLogin: login });
+        if (result?.entry?.id !== entry.id) throw new ApiError(502, 'bad_response', 'Сервер не подтвердил сохранение');
+      }
+      if(active.current && getState().login === login){bump();onDone();}
+    } catch (error) {
+      if (!active.current) return;
+      if (error instanceof ApiError && !error.network && error.status < 500 && !retryEntry) {
+        setErr(error.message);
+      } else {
+        setRetryEntry(entry);
+        setErr('Не удалось подтвердить сохранение. Повторите отправку этой операции или проверьте её в ленте.');
+      }
+    } finally {
+      saving.current=false;
+      if(active.current)setBusy(false);
+      onBusyChange?.(false);
+    }
   }
   function increase(minor:number) {
     const total=(inputMinor(amount)??0)+minor;
     if(!Number.isSafeInteger(total))return;
     setAmount(String(Math.floor(total/100))+(total%100?','+String(total%100).padStart(2,'0'):''));
   }
-  return <form className="add-form" onSubmit={save}><fieldset className="questionnaire-fields" disabled={busy}>
+  return <form className="add-form" onSubmit={save}><fieldset className="questionnaire-fields" disabled={busy||!!retryEntry}>
+    <AccountSelect value={account} onChange={setAccount}/>
     <div className="seg"><button type="button" className={dir==='out'?'on':''} onClick={()=>{setDir('out');setCat('');}}>Расход</button><button type="button" className={dir==='in'?'on':''} onClick={()=>{setDir('in');setCat('');}}>Доход</button></div>
     <div className="amount-entry"><input data-autofocus className="big" aria-label="Сумма" inputMode="decimal" placeholder="0" value={amount} onChange={e=>setAmount(e.target.value)} autoFocus/><span aria-hidden="true">₸</span></div>
     <div className="quick-amounts">{[100000,250000,500000].map(n=><button key={n} type="button" onClick={()=>increase(n)}>+{fmt(n)}</button>)}</div>
@@ -267,7 +303,8 @@ export function Add({ onDone, onBusyChange }: { onDone: () => void; onBusyChange
       <Field label="Дата"><input aria-label="Дата" type="date" required value={date} onChange={e=>setDate(e.target.value)}/></Field>
       <Field label="Заметка"><input aria-label="Заметка" value={note} placeholder="Необязательно" maxLength={MAX_NOTE_LENGTH} onChange={e=>setNote(e.target.value)}/></Field>
     </div>
+  </fieldset>
     {err&&<div className="err" role="alert">{err}</div>}
-    <button className="btn" disabled={busy}>{busy?'Сохраняем…':'Сохранить'}</button>
-  </fieldset></form>;
+    <button className="btn" disabled={busy}>{busy?'Сохраняем…':retryEntry?'Повторить отправку':'Сохранить'}</button>
+  </form>;
 }

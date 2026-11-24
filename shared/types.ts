@@ -1,6 +1,7 @@
 export const MAX_NOTE_LENGTH = 500;
 export type Direction = 'in' | 'out';
 export interface TxPayload {
+  financialAccountId?: string | null;
   direction: Direction;
   amountMinor: number; // тиын, всегда > 0
   counterparty: string;

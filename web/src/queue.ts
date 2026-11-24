@@ -3,9 +3,12 @@
 import { api, ApiError } from './api';
 
 export interface QItem { id: string; login: string; payload: any; createdAt: number; attempts: number; status: 'pending' | 'failed'; lastError?: string }
-export interface QStatus { count: number; failed: number; lastAttemptAt: number | null; lastResult: string; nextAttemptAt: number | null; online: boolean }
+export interface QStatus { count: number; failed: number; lastAttemptAt: number | null; lastResult: string; nextAttemptAt: number | null; online: boolean; storageError: 'read' | 'write' | null }
 
 const DB = 'qarjy-queue';
+class StorageOpenError extends Error {
+  constructor(cause: unknown) { super('Локальное хранилище недоступно', { cause }); }
+}
 function open(): Promise<IDBDatabase> {
   return new Promise((res, rej) => {
     const r = indexedDB.open(DB, 1);
@@ -18,10 +21,16 @@ function open(): Promise<IDBDatabase> {
   });
 }
 async function tx<T>(store: string, mode: IDBTransactionMode, f: (s: IDBObjectStore) => IDBRequest<T> | void): Promise<T> {
-  const db = await open();
+  let db: IDBDatabase;
+  try { db = await open(); }
+  catch (cause) { throw new StorageOpenError(cause); }
   return new Promise((res, rej) => {
-    const t = db.transaction(store, mode); const r = f(t.objectStore(store));
-    t.oncomplete = () => { db.close(); res((r as IDBRequest<T>)?.result as T); }; t.onerror = t.onabort = () => { db.close(); rej(t.error??new DOMException('Не удалось сохранить локальные данные','AbortError')); };
+    try {
+      const t = db.transaction(store, mode);
+      const r = f(t.objectStore(store));
+      t.oncomplete = () => { db.close(); res((r as IDBRequest<T>)?.result as T); };
+      t.onabort = () => { db.close(); rej(t.error??new DOMException('Не удалось сохранить локальные данные','AbortError')); };
+    } catch (error) { db.close(); rej(error); }
   });
 }
 const getAll = (): Promise<QItem[]> => tx('queue', 'readonly', s => s.getAll());
@@ -30,10 +39,14 @@ const del = (id: string) => tx('queue', 'readwrite', s => { s.delete(id); });
 const metaGet = (k: string): Promise<any> => tx('meta', 'readonly', s => s.get(k));
 const metaPut = (k: string, v: unknown) => tx('meta', 'readwrite', s => { s.put(v, k); });
 
-let status: QStatus = { count: 0, failed: 0, lastAttemptAt: null, lastResult: 'ещё не отправляли', nextAttemptAt: null, online: typeof navigator === 'undefined' ? true : navigator.onLine };
+const initialStatus = (): QStatus => ({ count: 0, failed: 0, lastAttemptAt: null, lastResult: 'ещё не отправляли', nextAttemptAt: null, online: typeof navigator === 'undefined' || navigator.onLine, storageError: null });
+let status = initialStatus();
 const subs = new Set<() => void>();
 const emit = () => subs.forEach(f => f());
-const storageFailure=()=>{status={...status,lastResult:'Локальное хранилище недоступно',nextAttemptAt:null};emit();};
+function storageFailure(kind: 'read' | 'write') {
+  if (status.storageError === 'write' || status.storageError === kind) return;
+  status = { ...status, storageError: kind }; emit();
+}
 export const subscribeQueue = (f: () => void) => { subs.add(f); return () => { subs.delete(f); }; };
 export const getQueueStatus = () => status;
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -44,16 +57,37 @@ let generation=0;
 
 export const listQueue = async (login: string) => (await getAll()).filter(i => i.login === login).sort((a, b) => b.createdAt - a.createdAt);
 async function refresh(login: string) {
-  if(login!==currentLogin)return;
-  const items = await listQueue(login);
-  if(login!==currentLogin)return;
-  status = { ...status, count: items.length, failed: items.filter(i => i.status === 'failed').length, online: navigator.onLine }; emit();
+  const started = generation;
+  const isCurrent = () => login === currentLogin && started === generation;
+  if (!isCurrent()) return [];
+  try {
+    const items = await listQueue(login);
+    if (isCurrent()) {
+      const storageError = status.storageError === 'read' ? null : status.storageError;
+      status = { ...status, count: items.length, failed: items.filter(i => i.status === 'failed').length, online: navigator.onLine, storageError }; emit();
+    }
+    return items;
+  } catch (error) {
+    if (isCurrent()) storageFailure('read');
+    throw error;
+  }
 }
 
 export async function enqueue(login: string, payload: any): Promise<QItem> {
   const item: QItem = { id: payload.id ?? crypto.randomUUID(), login, payload: { ...payload }, createdAt: Date.now(), attempts: 0, status: 'pending' };
   item.payload.id = item.id;
-  await put(item); await refresh(login); flush(login);
+  const started = generation;
+  const isCurrent = () => login === currentLogin && started === generation;
+  try { await put(item); }
+  catch (error) {
+    if (isCurrent()) storageFailure(error instanceof StorageOpenError ? 'read' : 'write');
+    throw error;
+  }
+  if (!isCurrent()) return item;
+  if (status.storageError === 'write') { status = { ...status, storageError: null }; emit(); }
+  // A failed status refresh cannot undo a committed queue item.
+  await refresh(login).catch(() => {});
+  if (isCurrent()) void flush(login);
   return item;
 }
 export async function removeFromQueue(login: string, id: string) { await del(id); await refresh(login); }
@@ -64,13 +98,12 @@ export async function retryFailed(login: string) {
 
 export function startQueue(login: string) {
   if(currentLogin!==login)stopQueue();
-  currentLogin = login; void refresh(login).catch(storageFailure);
-  flush(login);
+  currentLogin = login; void flush(login);
 }
 export function stopQueue(){
   generation++;currentLogin=null;requestedLogin=null;
   if(timer){clearTimeout(timer);timer=null;}
-  status={...status,count:0,failed:0,nextAttemptAt:null};emit();
+  status=initialStatus();emit();
 }
 /** Do not erase history while this browser can still send queued operations. */
 export async function withEmptyQueue<T>(login:string,action:()=>Promise<T>):Promise<T>{
@@ -82,7 +115,7 @@ export async function withEmptyQueue<T>(login:string,action:()=>Promise<T>):Prom
  stopQueue();const paused=generation;
  try{return await action();}finally{if(generation===paused)startQueue(login);}
 }
-const onOnline = () => { if (currentLogin) flush(currentLogin); };
+const onOnline = () => { status = { ...status, online: true }; emit(); if (currentLogin) void flush(currentLogin); };
 const onVisible = () => { if (document.visibilityState === 'visible' && currentLogin) flush(currentLogin); };
 if (typeof window !== 'undefined') {
   window.addEventListener('online', onOnline); window.addEventListener('offline', () => { status = { ...status, online: false }; emit(); });
@@ -102,12 +135,16 @@ let backoff = 5000;
 export async function flush(login: string): Promise<void> {
   if(login!==currentLogin)return;
   if (flushing) { requestedLogin = login; return; } flushing = true;
+  if (timer) { clearTimeout(timer); timer = null; status = { ...status, nextAttemptAt: null }; }
   const activeGeneration=generation,isCurrent=()=>activeGeneration===generation&&login===currentLogin;
+  let refreshAfterSend = false;
   try {
-    const items = (await listQueue(login)).filter(i => i.status === 'pending').sort((a, b) => a.createdAt - b.createdAt);
-    if(!isCurrent())return;
-    if (!items.length) { status = { ...status, nextAttemptAt: null }; await refresh(login); return; }
+    const queue = await refresh(login).catch(() => null);
+    if (!queue || !isCurrent()) return;
+    const items = queue.filter(i => i.status === 'pending').sort((a, b) => a.createdAt - b.createdAt);
+    if (!items.length) return;
     if (!navigator.onLine) { status = { ...status, lastResult: 'нет сети — отправим при возвращении онлайн' }; emit(); return; }
+    refreshAfterSend = true;
     status = { ...status, lastAttemptAt: Date.now() }; emit();
     for (let i = 0; i < items.length; i += 50) {
       if(!isCurrent())return;
@@ -117,20 +154,24 @@ export async function flush(login: string): Promise<void> {
         if(!isCurrent())return;
         const it = chunk.find(c => c.id === res.id); if (!it) continue;
         if (res.ok) await del(it.id); else await put({ ...it, attempts: it.attempts + 1, status: 'failed', lastError: res.error ?? 'отклонено сервером' });
+        if (!isCurrent()) return;
+        if (status.storageError === 'write') status = { ...status, storageError: null };
       }
     }
     backoff = 5000;
     status = { ...status, lastResult: 'успешно', nextAttemptAt: null };
   } catch (e) {
     if(!isCurrent())return;
-    if(!(e instanceof ApiError)){storageFailure();return;}
+    if(!(e instanceof ApiError)){storageFailure(e instanceof StorageOpenError ? 'read' : 'write');return;}
     const err = e as ApiError;
     const wait = err.status === 429 ? Math.max(err.retryAfter, 1) * 1000 : err.status === 401 ? 0 : backoff;
     status = { ...status, lastResult: err.status === 401 ? 'нужен вход' : `${err.message}${err.status ? ` (${err.status})` : ''}` };
     if (err.status !== 401 && (err.retryable ?? true)) { schedule(login, wait); backoff = Math.min(backoff * 2, 15 * 60_000); }
-    try{for (const i of await listQueue(login)) if (isCurrent()&&i.status === 'pending') await put({ ...i, attempts: i.attempts + 1, lastError: err.message });}catch{storageFailure();}
+    const queue = await refresh(login).catch(() => []);
+    try{for (const i of queue) if (isCurrent()&&i.status === 'pending') await put({ ...i, attempts: i.attempts + 1, lastError: err.message });}catch(error){if (isCurrent()) storageFailure(error instanceof StorageOpenError ? 'read' : 'write');}
   } finally {
-    flushing = false; if(isCurrent())await refresh(login).catch(storageFailure);
+    if (refreshAfterSend && isCurrent()) await refresh(login).catch(() => {});
+    flushing = false;
     const requested = requestedLogin; requestedLogin = null;
     // A new enqueue during an active send is an event, not a polling loop.
     // Preserve backoff if the send failed and scheduled a retry.

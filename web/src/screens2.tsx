@@ -7,6 +7,7 @@ import { getQueueStatus, subscribeQueue, listQueue, retryFailed, flush } from '.
 import { applyTheme, bump, Field, fmt, getState, setState, loadCats, monthLabel, savedTheme, shiftMonth, Sheet, thisMonth, useAppState, useAction, type Cat } from './ui';
 import { doLogout } from './screens1';
 import { FinancialProfileScreen } from './onboarding';
+import { AccountSelect } from './wallet';
 
 // ---------- Отчёты ----------
 interface CounterpartySummary {
@@ -18,20 +19,23 @@ interface CounterpartySummary {
   effectiveCategoryId: string | null;
   uncategorizedCount: number;
 }
-interface Summary { month: string; totals: { in: number; out: number; net: number; count: number }; byCategory: Record<'in' | 'out', Array<{ id: string | null; name: string; color: string; sum: number; count: number }>>; byCounterparty: Record<'in' | 'out', CounterpartySummary[]>; uncategorized: { count: number; sum: number } }
+interface Summary { selectedCategory:string|null; topEntries:Record<'in'|'out',Array<{id:string;occurredAt:number;amountMinor:number;counterparty:string;note:string;categoryId:string|null}>>; month: string; totals: { in: number; out: number; net: number; count: number }; byCategory: Record<'in' | 'out', Array<{ id: string | null; name: string; color: string; sum: number; count: number }>>; byCounterparty: Record<'in' | 'out', CounterpartySummary[]>; uncategorized: { count: number; sum: number } }
 
-function Donut({ data, total }: { data: Array<{ name: string; color: string; sum: number }>; total: number }) {
+function Donut({ data, total, selected, onSelect }: { data: Summary['byCategory']['out']; total: number; selected:string|null;onSelect:(key:string)=>void }) {
   const R = 54, C = 2 * Math.PI * R; let off = 0;
-  return <svg viewBox="0 0 140 140" width="180" height="180" role="img" aria-label="Диаграмма по категориям" style={{ display: 'block', margin: '0 auto' }}>
+  const chosen=data.find(d=>(d.id??'_none')===selected);
+  return <svg className="category-donut" viewBox="0 0 140 140" width="220" height="220" role="group" aria-label="Диаграмма по категориям" style={{ display: 'block', margin: '0 auto' }}>
     <circle cx="70" cy="70" r={R} fill="none" stroke="var(--bg3)" strokeWidth="18" />
-    {data.map(d => { const len = total ? (d.sum / total) * C : 0; const el = <circle key={d.name} cx="70" cy="70" r={R} fill="none" stroke={d.color} strokeWidth="18" strokeDasharray={`${Math.max(len - 1, 0)} ${C}`} strokeDashoffset={-off} transform="rotate(-90 70 70)" />; off += len; return el; })}
-    <text x="70" y="68" textAnchor="middle" fontSize="9" fill="var(--fg2)">всего</text>
-    <text x="70" y="82" textAnchor="middle" fontSize="11" fontWeight="700" fill="var(--fg)">{fmt(total)}</text>
+    {data.map(d => { const key=d.id??'_none',active=selected===key,len = total ? (d.sum / total) * C : 0; const el = <circle key={key} role="button" tabIndex={0} aria-label={`${d.name}: ${fmt(d.sum)}`} aria-pressed={active} onClick={()=>onSelect(key)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onSelect(key);}}} cx="70" cy="70" r={R} fill="none" stroke={d.color} strokeWidth={active?23:18} opacity={selected&&!active?0.35:1} strokeDasharray={`${Math.max(len - 1, 0)} ${C}`} strokeDashoffset={-off} transform="rotate(-90 70 70)" />; off += len; return el; })}
+    <text x="70" y="68" textAnchor="middle" fontSize="9" fill="var(--fg2)">{chosen?'категория':'всего'}</text>
+    <text x="70" y="82" textAnchor="middle" fontSize="11" fontWeight="700" fill="var(--fg)">{fmt(chosen?.sum??total)}</text>
   </svg>;
 }
 
 export function Reports() {
-  const { cats, version } = useAppState();
+  const { cats, version, selectedAccount, financialProfile } = useAppState();
+  const [category,setCategory]=useState<string|null>(null);
+  const toggleCategory=(key:string)=>{anchor.current=null;setCategory(current=>current===key?null:key);};
   const [month, setMonth] = useState(thisMonth()); const [dir, setDir] = useState<'out' | 'in'>('out'); const [s, setS] = useState<Summary | null>(null); const [err, setErr] = useState('');
   const [pick, setPick] = useState<Summary['byCounterparty']['out'][number] | null>(null);
   const [reload,setReload]=useState(0),[loading,setLoading]=useState(true);
@@ -47,26 +51,31 @@ export function Reports() {
       const row=Array.from(root.current?.querySelectorAll<HTMLElement>('[data-counterparty]')??[]).find(el=>{const r=el.getBoundingClientRect();return r.bottom>0&&r.top<innerHeight;});
       if(row)anchor.current={name:row.dataset.counterparty!,top:row.getBoundingClientRect().top,month,dir:shownDir.current};
     };
-    api('GET','/api/reports/summary?month='+month).then(r=>{if(active){remember();setS(r);setErr('');}}).catch(e=>{if(active){remember();setErr(e.message);}}).finally(()=>{if(active)setLoading(false);});
+    const params=new URLSearchParams({month});if(category!==null)params.set('category',category);if(selectedAccount)params.set('financialAccountId',selectedAccount);
+    api('GET','/api/reports/summary?'+params).then(r=>{if(active){remember();setS(r);setErr('');}}).catch(e=>{if(active){remember();setErr(e.message);}}).finally(()=>{if(active)setLoading(false);});
     return ()=>{active=false;};
-  }, [month, version, reload]);
+  }, [month, version, reload, category, selectedAccount]);
   useLayoutEffect(()=>{
     const saved=anchor.current;anchor.current=null;
     if(!saved||saved.month!==month||saved.dir!==dir)return;
     const row=Array.from(root.current?.querySelectorAll<HTMLElement>('[data-counterparty]')??[]).find(el=>el.dataset.counterparty===saved.name);
     if(row)shiftDocumentScroll(row.getBoundingClientRect().top-saved.top);
   },[s,err,month,dir]);
-  const total = s ? s.totals[dir] : 0; const catRows = s?.byCategory[dir] ?? []; const cpRows = s?.byCounterparty[dir] ?? [];
+  const total = s ? s.totals[dir] : 0; const catRows = s?.byCategory[dir] ?? [];
+  const detailsReady=s?.selectedCategory===category;
+  const cpRows = detailsReady?s?.byCounterparty[dir]??[]:[];
+  const chosen=catRows.find(c=>(c.id??'_none')===category),top=detailsReady?s?.topEntries?.[dir]??[]:[];
   return <div ref={root} style={{overflowAnchor:'none'}}>
     <h1>Отчёты</h1>
+    {!!financialProfile?.profile?.accounts.length&&<Field label="Счёт отчёта"><select aria-label="Счёт отчёта" value={selectedAccount??''} onChange={e=>{setS(null);setCategory(null);setState({selectedAccount:e.target.value||null});}}><option value="">Все счета</option>{financialProfile.profile.accounts.map(a=><option key={a.id} value={a.id}>{a.bank} · {a.name}</option>)}</select></Field>}
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-      <button className="btn small sec" aria-label="Предыдущий месяц" onClick={() => setMonth(shiftMonth(month, -1))}>‹</button>
+      <button className="btn small sec" aria-label="Предыдущий месяц" onClick={() => {setCategory(null);setMonth(shiftMonth(month, -1));}}>‹</button>
       <strong>{monthLabel(month).replace(/^./, c => c.toUpperCase()).replace(/ г\.$/, '')}</strong>
-      <button className="btn small sec" aria-label="Следующий месяц" onClick={() => setMonth(shiftMonth(month, 1))} disabled={month >= thisMonth()}>›</button>
+      <button className="btn small sec" aria-label="Следующий месяц" onClick={() => {setCategory(null);setMonth(shiftMonth(month, 1));}} disabled={month >= thisMonth()}>›</button>
     </div>
     {err && <div className="banner" role="alert">{err}<button className="btn small sec" disabled={loading} onClick={()=>{setLoading(true);setReload(n=>n+1);}}>Повторить загрузку отчёта</button></div>}
     {!s&&!err&&<p className="muted" role="status">Загружаем отчёт…</p>}
-    <div className="seg"><button className={dir === 'out' ? 'on' : ''} onClick={() => setDir('out')}>Расходы</button><button className={dir === 'in' ? 'on' : ''} onClick={() => setDir('in')}>Доходы</button></div>
+    <div className="seg"><button className={dir === 'out' ? 'on' : ''} onClick={() => {setCategory(null);setDir('out');}}>Расходы</button><button className={dir === 'in' ? 'on' : ''} onClick={() => {setCategory(null);setDir('in');}}>Доходы</button></div>
     {s && <>
       <div className="group" style={{ padding: 16, marginBottom: 8 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="muted">Расходы</span><b>{fmt(s.totals.out)}</b></div>
@@ -76,10 +85,13 @@ export function Reports() {
       {s.uncategorized.count > 0 && <div className="banner">Без категории: {s.uncategorized.count} {s.uncategorized.count === 1 ? 'запись' : 'записей'} на {fmt(s.uncategorized.sum)}. Назначьте категорию получателю ниже.</div>}
       {!catRows.length ? <div className="empty">За этот месяц нет {dir === 'out' ? 'расходов' : 'доходов'}</div> : <>
         <h2>По категориям</h2>
-        <div className="group" style={{ padding: 16 }}><Donut data={catRows} total={total} /></div>
-        <div className="group" style={{ marginTop: 8 }}>{catRows.map(c => <div className="row" key={c.name} data-testid="cat-row">
+        <div className="group" style={{ padding: 16 }}><Donut data={catRows} total={total} selected={category} onSelect={toggleCategory}/><p className="sub donut-hint">Нажмите на сектор или категорию. Ещё раз — все категории.</p></div>
+        <div className="group" style={{ marginTop: 8 }}>{catRows.map(c => <button className="row category-row" key={c.id??'_none'} data-testid="cat-row" aria-pressed={category===(c.id??'_none')} onClick={()=>toggleCategory(c.id??'_none')}>
           <span className="dot" style={{ background: c.color }} /><div className="grow"><div>{c.name}</div><div className="bar"><i style={{ width: `${total ? (c.sum / total) * 100 : 0}%`, background: c.color }} /></div></div>
-          <div style={{ textAlign: 'right' }}><div className="amt">{fmt(c.sum)}</div><div className="sub">{c.count} · {total ? Math.round((c.sum / total) * 100) : 0}%</div></div></div>)}</div>
+          <div style={{ textAlign: 'right' }}><div className="amt">{fmt(c.sum)}</div><div className="sub">{c.count} · {total ? Math.round((c.sum / total) * 100) : 0}%</div></div></button>)}</div>
+        {category!==null&&<div className="category-selection"><strong>{chosen?.name??'Категория'}</strong><button className="text-action" onClick={()=>setCategory(null)}>Все категории</button></div>}
+        <h2>Топ-10 {dir==='out'?'расходов':'доходов'}{chosen?' · '+chosen.name:''}</h2>
+        {!detailsReady?<p role="status" className="sub">Загружаем операции…</p>:<div className="group" data-testid="top-entries">{!top.length&&<p className="empty">В выбранной категории нет операций</p>}{top.map((entry,index)=><div className="row" key={entry.id} data-testid="top-entry"><span className="top-rank">{index+1}</span><div className="grow"><div className="ell">{entry.counterparty||entry.note||'Без получателя'}</div><div className="sub">{new Date(entry.occurredAt).toLocaleDateString('ru-RU',{day:'numeric',month:'short',timeZone:'Asia/Almaty'})} · {cats.find(c=>c.id===entry.categoryId)?.name??'Без категории'}</div></div><span className="amt">{fmt(entry.amountMinor)}</span></div>)}</div>}
         <h2>По {dir === 'out' ? 'получателям' : 'отправителям'}</h2>
         <div className="group">{cpRows.map(c => {
           const categoryName = c.effectiveCategoryId && catRows.find(x => x.id === c.effectiveCategoryId)?.name;
@@ -223,7 +235,7 @@ function Password() {
 function Sync() {
   const action=useAction();
   const st = useSyncExternalStore(subscribeQueue, getQueueStatus); const { login } = useAppState(); const [items, setItems] = useState<any[]>([]);
-  useEffect(() => { let active=true;if (login) listQueue(login).then(r=>{if(active)setItems(r);}).catch(()=>{if(active)setItems([]);});return ()=>{active=false;}; }, [login, st.count, st.failed]);
+  useEffect(() => { let active=true;if (login) listQueue(login).then(r=>{if(active)setItems(r);}).catch(()=>{if(active)setItems([]);});return ()=>{active=false;}; }, [login, st.count, st.failed, st.storageError]);
   const fmtT = (t: number | null) => (t ? new Date(t).toLocaleTimeString('ru-RU') : '—');
   return <><h1>Синхронизация</h1><div className="group">
     <div className="row"><span className="grow">Сеть</span><b>{st.online ? 'онлайн' : 'офлайн'}</b></div>
@@ -231,6 +243,7 @@ function Sync() {
     <div className="row"><span className="grow">Не принято сервером</span><b>{st.failed}</b></div>
     <div className="row"><span className="grow">Последняя попытка</span><b>{fmtT(st.lastAttemptAt)}</b></div>
     <div className="row"><span className="grow">Результат</span><b data-testid="q-result" style={{ textAlign: 'right' }}>{st.lastResult}</b></div>
+    {st.storageError&&<div className="row"><span className="grow">Локальное хранилище</span><b>Недоступно</b></div>}
     <div className="row"><span className="grow">Следующая попытка</span><b>{fmtT(st.nextAttemptAt)}</b></div>
     {pauseRemainingSec() > 0 && <div className="row"><span className="grow">Пауза сервера</span><b>{pauseRemainingSec()} с</b></div>}
   </div>
@@ -243,9 +256,11 @@ function Sync() {
 // ---------- Импорт CSV ----------
 const GUESS: Record<string, RegExp> = { date: /дата|date/i, amount: /сумма|amount|итого/i, cp: /получател|отправител|контрагент|merchant|название|наименование|recipient|counterparty/i, note: /назначен|описан|детал|комментар|details|description|операц/i };
 export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>void; onViewFeed?:()=>void } = {}) {
-  const {financialProfile}=useAppState();
+  const {financialProfile,selectedAccount}=useAppState();
+  const [account,setAccount]=useState(selectedAccount??'');
+  const importAccount=financialProfile?.profile?.accounts.find(a=>a.id===account);
   const [profiles, setProfiles] = useState<Array<{id: string; title: string; ready: boolean}>>([]);
-  const [bank, setBank] = useState(()=>financialProfile?.profile?.accounts.map(a=>a.bank.toLowerCase()).find(b=>['kaspi','halyk','freedom'].includes(b))??'kaspi');
+  const [bank, setBank] = useState(()=>{const preferred=financialProfile?.profile?.accounts.find(a=>a.id===selectedAccount)?.bank.toLowerCase();return ['kaspi','halyk','freedom'].find(b=>preferred?.includes(b))??financialProfile?.profile?.accounts.map(a=>a.bank.toLowerCase()).find(b=>['kaspi','halyk','freedom'].includes(b))??'kaspi';});
   useEffect(() => { api('GET', '/api/import/profiles').then(r => setProfiles(r.profiles)).catch(e => setErr(e.message)); }, []);
   const [file, setFile] = useState<{ name: string; text: string; header: string[]; delim: string; pdfBase64?: string } | null>(null);
   const [m, setM] = useState<{ date: number; amount: number; cp: number; note: number; mode: 'signed' | 'split' | 'dir'; debit: number; credit: number; dirCol: number; inV: string; outV: string }>({ date: 0, amount: 1, cp: -1, note: -1, mode: 'signed', debit: -1, credit: -1, dirCol: -1, inV: '', outV: '' });
@@ -273,13 +288,14 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
     setFile({ name: f.name, text, header, delim });
     }catch{if(generation===readGeneration.current)setErr('Не удалось прочитать файл. Выберите его ещё раз');}
   }
-  const body = (dryRun: boolean) => ({ accountLogin:getState().login,bank, pdfBase64: file!.pdfBase64, csv: file!.text, filename: file!.name, dryRun, mapping: { delimiter: file!.delim, hasHeader: true, dateCol: m.date, counterpartyCol: m.cp >= 0 ? m.cp : undefined, noteCol: m.note >= 0 ? m.note : undefined,
+  const body = (dryRun: boolean) => ({ financialAccountId:account||null,accountLogin:getState().login,bank, pdfBase64: file!.pdfBase64, csv: file!.text, filename: file!.name, dryRun, mapping: { delimiter: file!.delim, hasHeader: true, dateCol: m.date, counterpartyCol: m.cp >= 0 ? m.cp : undefined, noteCol: m.note >= 0 ? m.note : undefined,
     ...(m.mode === 'signed' ? { amountCol: m.amount } : m.mode === 'split' ? { debitCol: m.debit >= 0 ? m.debit : undefined, creditCol: m.credit >= 0 ? m.credit : undefined } : { amountCol: m.amount, directionCol: m.dirCol, inValues: m.inV.split(',').map(s => s.trim()).filter(Boolean), outValues: m.outV.split(',').map(s => s.trim()).filter(Boolean) }) } });
   async function run(dry: boolean) { if(importing.current)return;importing.current=true;setState({activeImports:getState().activeImports+1});setConfirmImport(false);setBusy(true); setErr(''); try { const r = await api('POST', '/api/import', body(dry)); setRep({...r,mappingSnapshot:JSON.stringify(m)}); if (!dry) { bump(); onImported?.(r.imported); } } catch (e) { setErr((e as ApiError).message); } finally { importing.current=false;setState({activeImports:Math.max(0,getState().activeImports-1)});setBusy(false); } }
   const sel = (label: string, key: 'date' | 'amount' | 'cp' | 'note' | 'debit' | 'credit' | 'dirCol', optional = false) => <Field label={label}><select disabled={busy} aria-label={label} value={m[key]} onChange={e => setM({ ...m, [key]: Number(e.target.value) })}>{optional && <option value={-1}>— нет —</option>}{file!.header.map((h, i) => <option key={i} value={i}>{h || `Колонка ${i + 1}`}</option>)}</select></Field>;
   return <>
     <div className="screen-kicker">ИМПОРТ ОПЕРАЦИЙ</div><h1>Выписка</h1><div className="import-hero" aria-hidden="true">↥</div>
     <p className="muted">Выберите банк и выписку в PDF. Для других файлов доступен CSV. За один раз — до 1000 строк.</p>
+    <AccountSelect label="Счёт выписки" value={account} disabled={busy} onChange={id=>{setAccount(id);setRep(null);}}/>
     <details className="import-help"><summary>Форматы и ограничения</summary><p className="muted">Каждая строка попадёт в отчёт: добавлена, распознана как повтор, отклонена с причиной или учтена как служебный текст. Halyk, Kaspi и Freedom: PDF с текстовым слоем. У Freedom многострочная операция считается одной строкой. Большую выписку разделите по датам, не разбивая операции одного дня.</p></details>
     <fieldset className="bank-fieldset" aria-label="Банк" disabled={busy}>
       <legend>Выберите банк · PDF</legend>
@@ -306,6 +322,6 @@ export function Import({ onImported, onViewFeed }: { onImported?: (n:number)=>vo
     {busy && <div className="parsing-state" role="status"><span className="spinner"/>Разбираем файл и проверяем операции…</div>}
     {rep&&<ImportReportView report={rep} onViewFeed={onViewFeed}/>}
     <HistoryPanel disabled={busy||confirmImport} onOpen={r=>{readGeneration.current++;setFile(null);setRep(r);}} onChanged={()=>{readGeneration.current++;setFile(null);setRep(null);}}/>
-    {confirmImport&&file&&<Sheet title="Подтвердить импорт" onClose={()=>setConfirmImport(false)}><p style={{overflowWrap:'anywhere'}}>Файл: {file.name}</p><p>Банк: {bank==='generic'?'Универсальный CSV':profiles.find(p=>p.id===bank)?.title??bank}</p><p>Операции будут добавлены в вашу историю. Проверьте файл и банк. Загрузку можно откатить через историю импортов.</p>{rep?.dryRun&&rep.mappingSnapshot===JSON.stringify(m)&&<p>Будет добавлено: {rep.imported}; повторы: {rep.duplicates}; отклонено: {rep.rejected}; служебных: {rep.service}.</p>}<div style={{display:'flex',gap:8}}><button className="btn sec" onClick={()=>setConfirmImport(false)}>Отмена</button><button className="btn" onClick={()=>run(false)}>Подтвердить импорт</button></div></Sheet>}
+    {confirmImport&&file&&<Sheet title="Подтвердить импорт" onClose={()=>setConfirmImport(false)}><p style={{overflowWrap:'anywhere'}}>Файл: {file.name}</p><p>Банк: {bank==='generic'?'Универсальный CSV':profiles.find(p=>p.id===bank)?.title??bank}</p><p>Счёт: {importAccount?importAccount.bank+' · '+importAccount.name:'Без счёта'}</p><p>Операции будут добавлены в вашу историю. Проверьте файл и банк. Загрузку можно откатить через историю импортов.</p>{rep?.dryRun&&rep.mappingSnapshot===JSON.stringify(m)&&<p>Будет добавлено: {rep.imported}; повторы: {rep.duplicates}; отклонено: {rep.rejected}; служебных: {rep.service}.</p>}<div style={{display:'flex',gap:8}}><button className="btn sec" onClick={()=>setConfirmImport(false)}>Отмена</button><button className="btn" onClick={()=>run(false)}>Подтвердить импорт</button></div></Sheet>}
   </>;
 }

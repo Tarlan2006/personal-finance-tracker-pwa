@@ -4,11 +4,13 @@ import { now, uuid } from '../../util';
 import { normName, parseAmountMinor, parseDateMs } from './normalize';
 import { effectiveCategory, loadMeta, type Meta } from './meta';
 import type { EntryDTO, TxPayload } from '../../../../shared/types';
+import { readProfile } from './financial-profile';
 
 export const KIND_TX = 'tx';
 const ID_RE = /^[A-Za-z0-9_.:-]{8,80}$/;
 
 export interface TxInput {
+  financialAccountId?: string | null;
   id?: string; occurredAt?: number | string; direction: string; amountMinor?: number; amount?: string | number;
   counterparty?: string; categoryId?: string | null; note?: string; title?: string; bank?: string;
 }
@@ -21,7 +23,7 @@ export function validateId(id: unknown): string {
 
 export function normalizeTx(inp: TxInput, nowMs = now()) {
   if(!inp||typeof inp!=='object'||Array.isArray(inp))throw new HttpError(400,'bad_entry','Нужен объект операции');
-  for(const [key,max] of [['counterparty',120],['note',MAX_NOTE_LENGTH],['title',120],['bank',30],['categoryId',80]] as const){
+  for(const [key,max] of [['counterparty',120],['note',MAX_NOTE_LENGTH],['title',120],['bank',30],['categoryId',80],['financialAccountId',80]] as const){
     const value=inp[key];if(value!=null&&(typeof value!=='string'||value.length>max))throw new HttpError(400,'bad_field',`Некорректное поле ${key}`);
   }
   if(inp.amount!=null&&!['string','number'].includes(typeof inp.amount))throw new HttpError(400,'bad_amount','Некорректная сумма');
@@ -41,6 +43,7 @@ export function normalizeTx(inp: TxInput, nowMs = now()) {
     occurredAt = v;
   }
   const payload: TxPayload = {
+    ...(inp.financialAccountId ? { financialAccountId: inp.financialAccountId } : {}),
     direction, amountMinor: minor,
     counterparty: String(inp.counterparty ?? '').trim().slice(0, 120),
     categoryId: inp.categoryId || null,
@@ -74,11 +77,17 @@ export async function createTx(store: Store, accountId: string, inp: TxInput, so
   const id = validateId(inp.id);
   const { payload, occurredAt } = normalizeTx(inp);
   if (payload.categoryId) await assertCategory(store, accountId, payload.categoryId, payload.direction);
+  if (payload.financialAccountId) await assertFinancialAccount(store, accountId, payload.financialAccountId);
   const res = await store.batch(insertStatements(store, accountId, id, payload, occurredAt, source));
   const duplicate = !res[0].meta?.changes;
   const row = await store.first<any>('SELECT * FROM entries WHERE account_id = ? AND id = ?', accountId, id);
   const meta = await loadMeta(store, accountId);
   return { entry: toDTO(row, meta), duplicate };
+}
+
+export async function assertFinancialAccount(store: Store, accountId: string, id: unknown) {
+  if (typeof id !== 'string' || !(await readProfile(store, accountId)).profile?.accounts.some(a => a.id === id))
+    throw new HttpError(400, 'bad_financial_account', 'Счёт недоступен. Выберите счёт из вашей анкеты');
 }
 
 export async function assertCategory(store: Store, accountId: string, categoryId: string, direction: 'in' | 'out') {
@@ -102,11 +111,13 @@ export async function updateTx(store: Store, accountId: string, id: string, body
     throw new HttpError(409, 'version_conflict', 'Запись уже изменена на другом устройстве');
   const old = JSON.parse(row.payload_json) as TxPayload;
   const merged = normalizeTx({
+    financialAccountId: body.financialAccountId !== undefined ? body.financialAccountId : old.financialAccountId,
     direction: body.direction ?? old.direction, amountMinor: body.amountMinor ?? (body.amount !== undefined ? undefined : old.amountMinor), amount: body.amount,
     counterparty: body.counterparty ?? old.counterparty, categoryId: body.categoryId !== undefined ? body.categoryId : old.categoryId,
     note: body.note ?? old.note, title: body.title ?? old.title, bank: old.bank, occurredAt: body.occurredAt ?? row.occurred_at,
   });
   if (merged.payload.categoryId) await assertCategory(store, accountId, merged.payload.categoryId, merged.payload.direction);
+  if (merged.payload.financialAccountId && merged.payload.financialAccountId !== old.financialAccountId) await assertFinancialAccount(store, accountId, merged.payload.financialAccountId);
   const t = now();
   const stmts = [store.stmt(
     `UPDATE entries SET occurred_at=?, updated_at=?, version=version+1, value=?, payload_json=?, search=?
@@ -143,6 +154,9 @@ export async function listTx(store: Store, accountId: string, q: URLSearchParams
   const limit = Math.min(Math.max(Number(q.get('limit') ?? 100) || 100, 1), 200);
   const where = ['account_id = ?', 'deleted_at IS NULL', 'kind = ?']; const args: unknown[] = [accountId, KIND_TX];
   const from = q.get('from'), to = q.get('to'), search = normName(q.get('q') ?? '');
+  if (q.has('financialAccountId')) {
+    where.push("COALESCE(json_extract(payload_json, '$.financialAccountId'), '') = ?"); args.push(q.get('financialAccountId'));
+  }
   if (from) { where.push('occurred_at >= ?'); args.push(Number(from)); }
   if (to) { where.push('occurred_at < ?'); args.push(Number(to)); }
   if (search) { where.push("search LIKE ? ESCAPE '\\'"); args.push('%' + search.replace(/[\\%_]/g, c => '\\' + c) + '%'); }

@@ -15,11 +15,11 @@ export const shiftMonth = (m: string, d: number) => { const [y, mo] = m.split('-
 
 // ---- глобальное состояние ----
 export interface Cat { id: string; name: string; type: 'expense' | 'income'; color: string }
-interface State { login: string | null; name: string; queueKey: string; cats: Cat[]; ready: boolean; version: number; financialProfile: FinancialProfileRecord | null; onboardingRequired:boolean;activeImports:number }
-let state: State = { login: null, name: '', queueKey: '', cats: [], ready: false, version: 0, financialProfile:null, onboardingRequired:false,activeImports:0 };
+interface State { selectedAccount: string|null; login: string | null; name: string; queueKey: string; cats: Cat[]; ready: boolean; version: number; financialProfile: FinancialProfileRecord | null; onboardingRequired:boolean;activeImports:number }
+let state: State = { selectedAccount:null, login: null, name: '', queueKey: '', cats: [], ready: false, version: 0, financialProfile:null, onboardingRequired:false,activeImports:0 };
 const subs = new Set<() => void>();
 export const getState = () => state;
-export const setState = (p: Partial<State>) => { state = { ...state, ...p }; subs.forEach(f => f()); };
+export const setState = (p: Partial<State>) => { state = { ...state, ...(p.login !== undefined && p.login !== state.login ? {selectedAccount:null} : {}), ...p }; subs.forEach(f => f()); };
 export const bump = () => setState({ version: state.version + 1 }); // сигнал «данные изменились»
 export const useAppState = () => useSyncExternalStore(f => { subs.add(f); return () => { subs.delete(f); }; }, getState);
 export async function loadCats() { setState({ cats: (await api('GET', '/api/categories')).categories }); }

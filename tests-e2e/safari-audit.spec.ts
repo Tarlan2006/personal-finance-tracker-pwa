@@ -51,9 +51,13 @@ test('прокрутка: короткий и горизонтальный эк�
  }
 });
 
-test('IndexedDB: зависшее открытие не блокирует вход и не обещает сохранение',async({page})=>{
+test('IndexedDB: зависшее открытие не блокирует вход и сохранение онлайн',async({page})=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.addInitScript(()=>Object.defineProperty(window,'indexedDB',{value:{open(){return {get error(){throw new DOMException('pending','InvalidStateError');}};}}}));
  await login(page);await expect(page.getByRole('alert')).toContainText('Локальное хранилище недоступно',{timeout:10000});
- await page.getByRole('button',{name:'Добавить операцию',exact:true}).click();const sheet=page.getByRole('dialog',{name:'Добавить',exact:true});await sheet.getByLabel('Сумма',{exact:true}).fill('1');await sheet.getByRole('button',{name:'Сохранить',exact:true}).click();await expect(sheet.getByRole('alert')).toContainText('Не удалось сохранить',{timeout:10000});expect(errors).toEqual([]);
+ await page.getByRole('button',{name:'Добавить операцию',exact:true}).click();const sheet=page.getByRole('dialog',{name:'Добавить',exact:true});await sheet.getByLabel('Сумма',{exact:true}).fill('1');
+ const response=page.waitForResponse(r=>r.url().endsWith('/api/entries')&&r.request().method()==='POST');
+ await sheet.getByRole('button',{name:'Сохранить',exact:true}).click();
+ expect((await response).status()).toBe(201);
+ await expect(sheet).toHaveCount(0);expect(errors).toEqual([]);
 });

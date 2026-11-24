@@ -11,6 +11,64 @@ async function setup() {
 const catId = async (env: any, cookie: string, name: string) =>
   (await call(env, 'GET', '/api/categories', { cookie })).data.categories.find((c: any) => c.name === name).id;
 
+const walletProfile = { balanceDate:'2026-11-01', accounts:[
+  {id:'wallet-kaspi',bank:'Kaspi',name:'Gold',kind:'card',openingBalanceMinor:100000},
+  {id:'wallet-deposit',bank:'Freedom',name:'Депозит',kind:'deposit',openingBalanceMinor:200000},
+],expenseCategoryIds:[],monthlyBudgetMinor:null,incomes:[],obligations:[],householdSize:1,goal:'',goalTargetMinor:null,monthlySavingMinor:null };
+
+describe('счета и детализация отчёта',()=>{
+  it('кошелёк изолирован; начальные остатки, дата UTC+5, правки и удаления пересчитываются',async()=>{
+    const {env,o,x}=await setup();
+    expect((await call(env,'GET','/api/wallet')).status).toBe(401);
+    expect((await call(env,'PUT','/api/financial-profile',{cookie:o,body:{version:0,status:'deferred',profile:walletProfile}})).status).toBe(200);
+    const post=(id:string,financialAccountId:string,amountMinor:number,occurredAt:string,direction='out')=>call(env,'POST','/api/entries',{cookie:o,body:{id,financialAccountId,amountMinor,occurredAt,direction}});
+    await post('wallet-tx-before','wallet-kaspi',900,'2026-10-31T18:59:59Z');
+    const entry=await post('wallet-tx-boundary','wallet-kaspi',1000,'2026-10-31T19:00:00Z');
+    expect(entry.status).toBe(201);expect(Number(entry.headers.get('X-Storage-Ops'))).toBeLessThanOrEqual(6);
+    await post('wallet-tx-deposit','wallet-deposit',2000,'2026-11-01','in');
+    const read=()=>call(env,'GET','/api/wallet',{cookie:o});
+    let wallet=await read();expect(Number(wallet.headers.get('X-Storage-Ops'))).toBeLessThanOrEqual(3);
+    expect(wallet.data.accounts.map((a:any)=>a.balanceMinor)).toEqual([99000,202000]);
+    expect((await call(env,'GET','/api/wallet',{cookie:x})).data.accounts).toEqual([]);
+    expect((await call(env,'GET','/api/entries?financialAccountId=wallet-kaspi',{cookie:x})).data.items).toEqual([]);
+    expect((await call(env,'GET','/api/entries?financialAccountId=wallet-deposit',{cookie:o})).data.items).toHaveLength(1);
+    expect((await call(env,'POST','/api/entries',{cookie:x,body:{financialAccountId:'wallet-kaspi',direction:'out',amountMinor:100}})).status).toBe(400);
+    expect((await call(env,'PATCH','/api/entries/wallet-tx-boundary',{cookie:o,body:{financialAccountId:'not-owned'}})).status).toBe(400);
+    await call(env,'PATCH','/api/entries/wallet-tx-boundary',{cookie:o,body:{financialAccountId:'wallet-deposit'}});
+    wallet=await read();expect(wallet.data.accounts.map((a:any)=>a.balanceMinor)).toEqual([100000,201000]);
+    await call(env,'DELETE','/api/entries/wallet-tx-boundary',{cookie:o});
+    wallet=await read();expect(wallet.data.accounts.map((a:any)=>a.balanceMinor)).toEqual([100000,202000]);
+  });
+  it('импорт назначается отдельному депозиту, повтор не создаёт дубль, чужой счёт запрещён',async()=>{
+    const {env,o,x}=await setup();
+    await call(env,'PUT','/api/financial-profile',{cookie:o,body:{version:0,status:'deferred',profile:walletProfile}});
+    const body={financialAccountId:'wallet-deposit',csv:'date;amount;name\n2026-11-02;12;Deposit interest',mapping:{dateCol:0,amountCol:1,counterpartyCol:2}};
+    expect((await call(env,'POST','/api/import',{cookie:x,body})).status).toBe(400);
+    const first=await call(env,'POST','/api/import',{cookie:o,body});expect(first.data.imported).toBe(1);
+    const repeat=await call(env,'POST','/api/import',{cookie:o,body});expect(repeat.data.duplicates).toBe(1);
+    expect((await call(env,'GET','/api/entries?financialAccountId=wallet-deposit',{cookie:o})).data.items).toHaveLength(1);
+    expect((await call(env,'GET','/api/wallet',{cookie:o})).data.accounts[1].balanceMinor).toBe(201200);
+  });
+  it('выбранная эффективная категория фильтрует топ-10 и получателей, но сохраняет общий круг',async()=>{
+    const {env,o,x}=await setup();const category=await catId(env,o,'Магазины');
+    await call(env,'POST','/api/rules',{cookie:o,body:{pattern:'TOP SHOP',direction:'out',categoryId:category}});
+    for(let i=1;i<=12;i++)await call(env,'POST','/api/entries',{cookie:o,body:{id:'top-entry-'+String(i).padStart(4,'0'),direction:'out',amountMinor:i*100,occurredAt:'2026-11-02',counterparty:'TOP SHOP '+i}});
+    await call(env,'POST','/api/entries',{cookie:o,body:{id:'top-uncategorized',direction:'out',amountMinor:99000,occurredAt:'2026-11-02',counterparty:'Other'}});
+    await call(env,'POST','/api/entries',{cookie:o,body:{id:'top-income-entry',direction:'in',amountMinor:500,occurredAt:'2026-11-02',counterparty:'Income'}});
+    const summary=(query:string,cookie=o)=>call(env,'GET','/api/reports/summary?month=2026-11'+query,{cookie});
+    const all=await summary(''),filtered=await summary('&category='+category);
+    expect(filtered.data.byCategory).toEqual(all.data.byCategory);expect(filtered.data.totals).toEqual(all.data.totals);
+    expect(filtered.data.topEntries.out.map((e:any)=>e.amountMinor)).toEqual([1200,1100,1000,900,800,700,600,500,400,300]);
+    expect(filtered.data.byCounterparty.out).toHaveLength(12);expect(filtered.data.topEntries.in).toEqual([]);
+    expect((await summary('&category=_none')).data.topEntries.out.map((e:any)=>e.counterparty)).toEqual(['Other']);
+    expect((await summary('&category='+category,x)).data.topEntries.out).toEqual([]);
+    expect((await summary('')).data.topEntries.out[0].counterparty).toBe('Other');
+    await call(env,'DELETE','/api/entries/top-entry-0012',{cookie:o});
+    expect((await summary('&category='+category)).data.topEntries.out[0].amountMinor).toBe(1100);
+    expect(Number(filtered.headers.get('X-Storage-Ops'))).toBeLessThanOrEqual(3);
+  });
+});
+
 describe('разбор сумм и дат', () => {
   it('суммы', () => {
     const t: Array<[string, number | null]> = [['1 500,50', 150050], ['1,500.50', 150050], ['-1500', -150000], ['1.500.000', 150000000], ['1500.5 ₸', 150050], ['12 000 ₸', 1200000], ['abc', null], ['', null], ['+2500,00', 250000], ['0,5', 50]];
@@ -34,8 +92,12 @@ describe('разбор сумм и дат', () => {
 
 describe('записи', () => {
   it('идемпотентность по id: повтор не создаёт дубль', async () => {
-    const { env, o } = await setup();
-    const body = { id: 'client-uuid-0001', direction: 'out', amountMinor: 150000, counterparty: 'Magnum' };
+    const { env, o, x } = await setup();
+    const body = { accountLogin: 'owner', id: 'client-uuid-0001', direction: 'out', amountMinor: 150000, counterparty: 'Magnum' };
+    const mismatch = await call(env, 'POST', '/api/entries', { cookie: x, body });
+    expect(mismatch.status).toBe(409);
+    expect(mismatch.data.error).toBe('account_changed');
+    expect((await call(env, 'GET', '/api/entries', { cookie: x })).data.items).toEqual([]);
     const a = await call(env, 'POST', '/api/entries', { cookie: o, body });
     const b = await call(env, 'POST', '/api/entries', { cookie: o, body });
     expect(a.status).toBe(201); expect(b.status).toBe(200); expect(b.data.duplicate).toBe(true);

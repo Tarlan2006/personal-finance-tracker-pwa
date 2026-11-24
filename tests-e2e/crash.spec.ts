@@ -101,13 +101,98 @@ test('краш: два submit создают одну операцию',async({p
  await sheet.locator('form').evaluate(f=>{for(let i=0;i<2;i++)f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));});
  await expect(sheet).toHaveCount(0);await expect.poll(()=>page.evaluate(async()=>(await(await fetch('/api/entries?q=AUDIT%20DOUBLE%20SUBMIT')).json()).items.length)).toBe(1);
 });
-test('краш: запрет IndexedDB не блокирует вход и не обещает сохранение',async({page})=>{
+test('краш: запрет IndexedDB позволяет сохранить онлайн и повторить без дубля',async({page})=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.getByRole('navigation').getByRole('button',{name:'Ещё',exact:true}).click();await page.getByRole('button',{name:'Выйти',exact:true}).click();
- await page.addInitScript(()=>{Object.defineProperty(window,'indexedDB',{value:{open(){throw new DOMException('SYNTHETIC STORAGE DENIED','SecurityError');}}});});
+ await page.addInitScript(()=>{
+   const originalOpen = indexedDB.open.bind(indexedDB);
+   Object.defineProperty(indexedDB,'open',{configurable:true,value:(name:string,version?:number)=>{
+     if (name === 'qarjy-queue') throw new DOMException('SYNTHETIC STORAGE DENIED','SecurityError');
+     return originalOpen(name,version);
+   }});
+ });
  await login(page);await expect(page.getByRole('alert')).toContainText('Локальное хранилище недоступно');
- await page.getByRole('button',{name:'Добавить операцию',exact:true}).click();const sheet=page.getByRole('dialog',{name:'Добавить',exact:true});await sheet.getByLabel('Сумма',{exact:true}).fill('1');await sheet.getByRole('button',{name:'Сохранить',exact:true}).click();await expect(sheet.getByRole('alert')).toContainText('Не удалось сохранить');expect(errors).toEqual([]);
+ await page.getByRole('button',{name:'Добавить операцию',exact:true}).click();const sheet=page.getByRole('dialog',{name:'Добавить',exact:true});
+ const recipient='AUDIT STORAGE FALLBACK '+test.info().project.name;
+ await sheet.getByLabel('Сумма',{exact:true}).fill('1');await sheet.getByLabel('Получатель',{exact:true}).fill(recipient);
+ const ids:string[]=[];
+ await page.route('**/api/entries',async route=>{
+   if(route.request().method()!=='POST')return route.continue();
+   ids.push(route.request().postDataJSON().id);
+   if(ids.length===1){await route.fetch();await route.abort();}
+   else await route.continue();
+ });
+ await page.context().setOffline(true);
+ await sheet.getByRole('button',{name:'Сохранить',exact:true}).click();
+ await expect(sheet.getByRole('alert')).toContainText('Нет подключения к интернету');
+ expect(ids).toEqual([]);
+ await page.context().setOffline(false);
+ await sheet.getByRole('button',{name:'Сохранить',exact:true}).click();
+ await expect(sheet.getByRole('alert')).toContainText('Не удалось подтвердить сохранение');
+ await expect(sheet.getByLabel('Сумма',{exact:true})).toBeDisabled();
+ await sheet.getByRole('button',{name:'Повторить отправку',exact:true}).click();
+ await expect(sheet).toHaveCount(0);
+ expect(ids).toHaveLength(2);expect(ids[1]).toBe(ids[0]);
+ const entries=await page.evaluate(async q=>(await(await fetch('/api/entries?q='+encodeURIComponent(q))).json()).items,recipient);
+ expect(entries.map((entry:{id:string})=>entry.id)).toEqual([ids[0]]);expect(errors).toEqual([]);
+ await page.evaluate(()=>Reflect.deleteProperty(indexedDB,'open'));
+ await page.getByRole('button',{name:'Проверить хранилище снова'}).click();
+ await expect(page.getByText('Локальное хранилище недоступно',{exact:false})).toHaveCount(0);
 });
+test('IndexedDB: сбой чтения после записи сохраняет очередь без резервного POST',async({page,context})=>{
+ const recipient='AUDIT COMMITTED QUEUE '+test.info().project.name;
+ const directPosts:string[]=[];
+ page.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/entries')directPosts.push(request.url());});
+ await context.setOffline(true);
+ await page.evaluate(()=>{
+   const original=IDBDatabase.prototype.transaction;
+   (window as any).__restoreQueueRead=()=>{IDBDatabase.prototype.transaction=original;};
+   IDBDatabase.prototype.transaction=function(...args:Parameters<typeof original>){
+     if(this.name==='qarjy-queue'&&(args[1]===undefined||args[1]==='readonly'))throw new DOMException('SYNTHETIC READ FAILURE','InvalidStateError');
+     return original.apply(this,args);
+   };
+ });
+ await page.getByRole('button',{name:'Добавить операцию',exact:true}).click();
+ const sheet=page.getByRole('dialog',{name:'Добавить',exact:true});
+ await sheet.getByLabel('Сумма',{exact:true}).fill('1');await sheet.getByLabel('Получатель',{exact:true}).fill(recipient);
+ await sheet.getByRole('button',{name:'Сохранить',exact:true}).click();await expect(sheet).toHaveCount(0);
+ await expect(page.getByRole('alert').filter({hasText:'Локальное хранилище недоступно'})).toBeVisible();expect(directPosts).toEqual([]);
+ await page.evaluate(()=>(window as any).__restoreQueueRead());
+ await page.getByRole('button',{name:'Проверить хранилище снова'}).click();
+ await expect(page.getByText('Локальное хранилище недоступно',{exact:false})).toHaveCount(0);
+ await expect(page.getByRole('heading',{name:'Ждут отправки (1)',exact:true})).toBeVisible();
+ await context.setOffline(false);
+ await expect(page.getByRole('heading',{name:/Ждут отправки/})).toHaveCount(0);
+ const entries=await page.evaluate(async q=>(await(await fetch('/api/entries?q='+encodeURIComponent(q))).json()).items,recipient);
+ expect(entries).toHaveLength(1);expect(directPosts).toEqual([]);
+});
+
+test('IndexedDB: отказ записи сохраняет онлайн, предупреждение снимается после новой локальной записи',async({page})=>{
+ const recipient='AUDIT WRITE FAILURE '+test.info().project.name;
+ await page.evaluate(()=>{
+   const original=IDBObjectStore.prototype.put;
+   (window as any).__restoreQueueWrite=()=>{IDBObjectStore.prototype.put=original;};
+   IDBObjectStore.prototype.put=function(...args:Parameters<typeof original>){
+     if(this.name==='queue')throw new DOMException('SYNTHETIC QUOTA EXCEEDED','QuotaExceededError');
+     return original.apply(this,args);
+   };
+ });
+ for(const suffix of [' fallback',' recovered']){
+   await page.getByRole('button',{name:'Добавить операцию',exact:true}).click();
+   const sheet=page.getByRole('dialog',{name:'Добавить',exact:true});
+   await sheet.getByLabel('Сумма',{exact:true}).fill('1');await sheet.getByLabel('Получатель',{exact:true}).fill(recipient+suffix);
+   await sheet.getByRole('button',{name:'Сохранить',exact:true}).click();await expect(sheet).toHaveCount(0);
+   if(suffix===' fallback'){
+     await expect(page.getByRole('alert')).toContainText('Локальное хранилище недоступно');
+     await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
+     await expect(page.getByRole('alert')).toContainText('Локальное хранилище недоступно');
+     await page.evaluate(()=>(window as any).__restoreQueueWrite());
+   }
+ }
+ await expect(page.getByText('Локальное хранилище недоступно',{exact:false})).toHaveCount(0);
+ await expect.poll(()=>page.evaluate(async q=>(await(await fetch('/api/entries?q='+encodeURIComponent(q))).json()).items.length,recipient)).toBe(2);
+});
+
 test('отчёт: 320 операций и 70 служебных строк, история и полная пагинация',async({page})=>{
  await page.getByRole('navigation').getByRole('button',{name:'Выписка',exact:true}).click();await page.getByRole('radio',{name:'Универсальный CSV',exact:true}).check();
  const csv='Дата;Сумма;Контрагент\n'+Array.from({length:320},(_,i)=>`01.11.2026;-${(100+i)/100};AUDIT SERVICE FLOW ${i}`).join('\n')+'\n'+Array(70).fill(';;').join('\n');
