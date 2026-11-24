@@ -35,20 +35,98 @@ test('счета: только свои банки, отдельный депо�
   await sheet.getByRole('button',{name:'Доход',exact:true}).click();
   await sheet.getByLabel('Сумма',{exact:true}).fill('10');await sheet.getByLabel('Получатель',{exact:true}).fill('WALLET DEPOSIT '+test.info().project.name);
   await sheet.getByRole('button',{name:'Сохранить',exact:true}).click();await expect(sheet).toHaveCount(0);
-  await expect(deposit.locator('.wallet-balance')).toHaveText(/3\s?010 ₸/);
+  const depositCard=page.getByTestId('wallet-card').filter({has:deposit});
+  await expect(depositCard.locator('.wallet-balance')).toHaveText(/3\s?010 ₸/);
   await expect(page.locator('[data-entry-id]')).toHaveCount(1);
   const kaspi=page.getByRole('button',{name:'Kaspi · Gold · Карта',exact:true});await kaspi.click();
   await expect(kaspi).toHaveAttribute('aria-pressed','true');await expect(page.locator('[data-entry-id]')).toHaveCount(12);
   await kaspi.click();await expect(page.getByRole('button',{name:'Все счета',exact:true})).toHaveAttribute('aria-pressed','true');
   await expect(page.locator('[data-entry-id]')).toHaveCount(14);
-  await expect.poll(()=>deposit.evaluate(el=>{const flows=el.querySelector('.wallet-flows')!.getBoundingClientRect();return flows.bottom<=el.getBoundingClientRect().bottom-8;})).toBe(true);
-  expect(await deposit.evaluate(el=>getComputedStyle(el).transitionProperty)).toContain('transform');
-  expect(await deposit.evaluate(el=>getComputedStyle(el).backgroundImage)).toContain('rgb(7, 27, 22)');
-  expect(await kaspi.evaluate(el=>getComputedStyle(el).backgroundImage)).toContain('rgb(193, 155, 83)');
+  await expect.poll(()=>depositCard.evaluate(el=>{const flows=el.querySelector('.wallet-flows')!.getBoundingClientRect();return flows.bottom<=el.getBoundingClientRect().bottom-8;})).toBe(true);
+  expect(await depositCard.evaluate(el=>getComputedStyle(el).transitionProperty)).toContain('transform');
+  expect(await depositCard.locator('.wallet-surface-bottom').evaluate(el=>getComputedStyle(el).backgroundColor)).toBe('rgb(7, 27, 22)');
+  expect(await page.locator('.wallet-kaspi .wallet-surface-top').evaluate(el=>getComputedStyle(el).backgroundColor)).toBe('rgb(217, 174, 98)');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);
+  await expect(depositCard.locator('.wallet-balance')).toHaveText(/3\s?010 ₸/);
+  await expect(page.locator('.island-toast')).toHaveCount(0);
   await page.getByRole('region',{name:'Мои счета'}).screenshot({path:`test-results/wallet-${test.info().project.name}.png`});
   await page.emulateMedia({reducedMotion:'reduce'});
-  expect(await deposit.evaluate(el=>parseFloat(getComputedStyle(el).transitionDuration))).toBeLessThan(0.001);
+  expect(await depositCard.evaluate(el=>parseFloat(getComputedStyle(el).transitionDuration))).toBeLessThan(0.001);
+});
+
+test('wallet: бюджеты сохраняются, перевод повторяется без дубля и отменяется',async({page})=>{
+  await setup(page);
+  await page.getByRole('button',{name:'Бюджеты Kaspi · Gold',exact:true}).click();
+  const budget=page.getByRole('dialog',{name:'Бюджеты счёта',exact:true});
+  await budget.getByLabel('Название бюджета',{exact:true}).fill('На продукты');
+  await budget.getByLabel('Сумма бюджета',{exact:true}).fill('250');
+  await budget.getByRole('button',{name:'Сохранить бюджет',exact:true}).click();
+  await expect(budget.getByRole('button',{name:/На продукты · 250/})).toBeVisible();
+  await budget.getByRole('button',{name:'Закрыть',exact:true}).click();
+  await page.reload();await page.getByRole('button',{name:'Бюджеты Kaspi · Gold',exact:true}).click();
+  await expect(budget.getByRole('button',{name:/На продукты · 250/})).toBeVisible();
+  await budget.getByRole('button',{name:'Закрыть',exact:true}).click();
+  const before=await page.evaluate(async()=>await(await fetch('/api/wallet')).json());
+  await page.getByRole('button',{name:'Перевод между счетами',exact:true}).click();
+  const transfer=page.getByRole('dialog',{name:'Между своими счетами',exact:true});
+  await transfer.getByLabel('Откуда',{exact:true}).selectOption('ui-kaspi-card');
+  await transfer.getByLabel('Куда',{exact:true}).selectOption('ui-freedom-deposit');
+  await transfer.getByLabel('Сумма перевода',{exact:true}).fill('100');
+  let lost=false;const sent:string[]=[];
+  await page.route('**/api/transfers',async route=>{if(route.request().method()!=='POST')return route.continue();sent.push(route.request().postData()!);if(!lost){lost=true;await route.fetch();return route.abort('failed');}if(sent.length===2)return route.fulfill({status:429,contentType:'application/json',body:JSON.stringify({error:'rate_limited',message:'Повторите подтверждение'})});return route.continue();});
+  await transfer.getByRole('button',{name:'Учесть перевод',exact:true}).click();
+  await expect(transfer.getByRole('button',{name:'Повторить подтверждение',exact:true})).toBeVisible();
+  await transfer.getByRole('button',{name:'Повторить подтверждение',exact:true}).click();
+  await expect(transfer.getByRole('alert').filter({hasText:'Повторите подтверждение'}).last()).toBeVisible();
+  await transfer.getByRole('button',{name:'Повторить подтверждение',exact:true}).click();
+  await expect(transfer.getByRole('status')).toHaveText('Перевод учтён');expect(sent).toHaveLength(3);expect(new Set(sent).size).toBe(1);
+  const after=await page.evaluate(async()=>await(await fetch('/api/wallet')).json());
+  const find=(w:any,id:string)=>w.accounts.find((a:any)=>a.id===id);
+  expect(find(after,'ui-kaspi-card').balanceMinor).toBe(find(before,'ui-kaspi-card').balanceMinor-10000);
+  expect(find(after,'ui-freedom-deposit').balanceMinor).toBe(find(before,'ui-freedom-deposit').balanceMinor+10000);
+  expect(after.accounts.map((a:any)=>[a.in,a.out])).toEqual(before.accounts.map((a:any)=>[a.in,a.out]));
+  await expect(transfer.getByRole('button',{name:'Отменить перевод 100 ₸',exact:true})).toHaveCount(1);
+  page.once('dialog',d=>d.accept());await transfer.getByRole('button',{name:'Отменить перевод 100 ₸',exact:true}).click();
+  await expect(transfer.getByRole('button',{name:'Отменить перевод 100 ₸',exact:true})).toHaveCount(0);
+  const restored=await page.evaluate(async()=>await(await fetch('/api/wallet')).json());
+  expect(restored.accounts.map((a:any)=>a.balanceMinor)).toEqual(before.accounts.map((a:any)=>a.balanceMinor));
+});
+
+test('wallet: 390px, планшет, десктоп, логотипы, стопка и бюджеты наличных',async({page})=>{
+  await setup(page);
+  await page.evaluate(async()=>{
+    const record=await(await fetch('/api/financial-profile')).json();
+    record.profile.accounts=[
+      {id:'design-cash',bank:'Наличные',name:'Кошелёк',kind:'cash',openingBalanceMinor:72586500,budgets:[{id:'cash-personal',name:'Личные',amountMinor:9050000},{id:'cash-business',name:'Бизнес',amountMinor:18000000}]},
+      {id:'design-kaspi',bank:'Kaspi',name:'Gold',kind:'card',openingBalanceMinor:25870000},
+      {id:'design-forte',bank:'Forte',name:'Основная',kind:'card',openingBalanceMinor:24104000},
+      {id:'design-halyk',bank:'Halyk',name:'Основная',kind:'card',openingBalanceMinor:75855500},
+      {id:'design-freedom',bank:'Freedom',name:'Накопления',kind:'deposit',openingBalanceMinor:12000000}];
+    const r=await fetch('/api/financial-profile',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(record)});if(!r.ok)throw new Error('Synthetic design profile failed');
+  });
+  await page.setViewportSize({width:390,height:844});await page.reload();
+  const wallet=page.getByRole('region',{name:'Мои счета'}),cards=page.getByTestId('wallet-card');
+  await expect(cards).toHaveCount(5);await expect(wallet.getByRole('heading',{name:'Счета и бюджеты'})).toBeVisible();
+  await expect.poll(()=>wallet.locator('.bank-logo img').evaluateAll(imgs=>imgs.every(img=>(img as HTMLImageElement).complete&&(img as HTMLImageElement).naturalWidth>0))).toBe(true);
+  const kaspi=page.getByRole('button',{name:'Kaspi · Gold · Карта',exact:true});
+  await kaspi.click();await expect(kaspi).toHaveAttribute('aria-pressed','true');
+  await expect.poll(()=>cards.evaluateAll(els=>{const y=els.find(el=>el.getAttribute('data-account')==='design-kaspi')!.getBoundingClientRect().top;return els.every(el=>el.getBoundingClientRect().top>=y);})).toBe(true);
+  await page.getByRole('button',{name:'Свернуть карточки',exact:true}).click();await expect(kaspi).toHaveAttribute('aria-pressed','false');
+  const cash=page.getByRole('button',{name:'Наличные · Кошелёк · Наличные',exact:true});await cash.click();
+  await expect(wallet.locator('.wallet-cash .wallet-balance')).toHaveText(/725\s?865 ₸/);
+  await expect(wallet.getByRole('button',{name:/Личные.*90/})).toBeVisible();
+  const scroller=wallet.getByLabel('Бюджеты наличных',{exact:true});expect(await scroller.evaluate(el=>el.scrollWidth>el.clientWidth)).toBe(true);
+  await scroller.evaluate(el=>el.scrollLeft=el.scrollWidth);expect(await scroller.evaluate(el=>el.scrollLeft)).toBeGreaterThan(0);
+  for(const width of [390,768,1280]){
+    await page.setViewportSize({width,height:width===390?844:1024});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);
+    await expect.poll(()=>wallet.locator('.wallet-cash').evaluate(el=>el.querySelector('.wallet-flows')!.getBoundingClientRect().bottom<=el.getBoundingClientRect().bottom)).toBe(true);
+    await expect(wallet.locator('.wallet-cash .wallet-balance')).toHaveText(/725\s?865 ₸/);
+    await wallet.screenshot({path:`test-results/wallet-design-${test.info().project.name}-${width}.png`,animations:'disabled',scale:'css',style:'.tabbar,.fab,.island-toast{visibility:hidden!important}'});
+  }
+  await page.emulateMedia({reducedMotion:'reduce'});await kaspi.click();
+  await expect(wallet.locator('.wallet-kaspi .wallet-balance')).toHaveText(/258\s?700 ₸/);
+  expect(await wallet.locator('.wallet-kaspi').evaluate(el=>parseFloat(getComputedStyle(el).transitionDuration))).toBeLessThan(0.001);
 });
 
 test('диаграмма: сектор фильтрует топ-10, повтор возвращает все категории',async({page})=>{

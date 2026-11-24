@@ -1,6 +1,14 @@
 import { it, expect } from 'vitest';
 import { measureSession } from './ops-measure';
 
+it('переводы: запись, повтор, список и отмена укладываются в бюджет D1',async()=>{
+  const {makeEnv,addAccount,loginAs,call}=await import('./helpers');
+  const {env,store}=makeEnv();await addAccount(store,'transfer-ops');const cookie=(await loginAs(env,'transfer-ops')).cookie;
+  await call(env,'PUT','/api/financial-profile',{cookie,body:{version:0,status:'deferred',profile:{balanceDate:'2026-11-01',accounts:['a','b'].map(id=>({id,bank:'Kaspi',name:id,kind:'card',openingBalanceMinor:0})),expenseCategoryIds:[],monthlyBudgetMinor:null,incomes:[],obligations:[],householdSize:1,goal:'',goalTargetMinor:null,monthlySavingMinor:null}}});
+  const body={id:'ops-transfer-01',accountLogin:'transfer-ops',fromId:'a',toId:'b',amountMinor:100,occurredAt:Date.parse('2026-11-03')};
+  for(const [method,path,budget] of [['POST','/api/transfers',4],['POST','/api/transfers',2],['GET','/api/transfers',2],['DELETE','/api/transfers/ops-transfer-01',2]] as const){const r=await call(env,method,path,{cookie,body:method==='POST'?body:undefined});expect(r.status).toBeLessThan(300);expect(Number(r.headers.get('X-Storage-Ops'))).toBeLessThanOrEqual(budget);}
+});
+
 it('бюджет обращений к хранилищу на запрос не превышен', async () => {
   const rows = await measureSession();
   const budget: Record<string, number> = {

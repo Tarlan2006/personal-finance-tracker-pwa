@@ -17,6 +17,49 @@ const walletProfile = { balanceDate:'2026-11-01', accounts:[
 ],expenseCategoryIds:[],monthlyBudgetMinor:null,incomes:[],obligations:[],householdSize:1,goal:'',goalTargetMinor:null,monthlySavingMinor:null };
 
 describe('счета и детализация отчёта',()=>{
+  it('бюджеты сохраняются на своём счёте, валидируются и не меняют остаток',async()=>{
+    const {env,o,x}=await setup();
+    const profile=structuredClone(walletProfile) as any;
+    profile.accounts[0].budgets=[{id:'budget-food',name:'Продукты',amountMinor:50000}];
+    const save=(version=0,p=profile)=>call(env,'PUT','/api/financial-profile',{cookie:o,body:{version,status:'deferred',profile:p}});
+    expect((await save()).status).toBe(200);
+    expect((await call(env,'GET','/api/financial-profile',{cookie:o})).data.profile.accounts[0].budgets).toEqual(profile.accounts[0].budgets);
+    expect((await call(env,'GET','/api/financial-profile',{cookie:x})).data.profile).toBeNull();
+    expect((await call(env,'GET','/api/wallet',{cookie:o})).data.accounts[0].balanceMinor).toBe(100000);
+    expect((await save()).status).toBe(409);
+    for(const amountMinor of [-1,1.5,null]){const invalid=structuredClone(profile);invalid.accounts[0].budgets[0].amountMinor=amountMinor;expect((await save(1,invalid)).status).toBe(400);}
+    const invalid=structuredClone(profile);invalid.accounts[0].budgets.push(invalid.accounts[0].budgets[0]);expect((await save(1,invalid)).status).toBe(400);
+    profile.accounts[0].name='Renamed';expect((await save(1)).data.profile.accounts[0].budgets).toHaveLength(1);
+  });
+  it('перевод атомарен, идемпотентен и изолирован; отмена восстанавливает остатки без дохода/расхода',async()=>{
+    const {env,o,x,store}=await setup();
+    await call(env,'PUT','/api/financial-profile',{cookie:o,body:{version:0,status:'deferred',profile:walletProfile}});
+    const body={id:'transfer-test-01',accountLogin:'owner',fromId:'wallet-kaspi',toId:'wallet-deposit',amountMinor:25000,occurredAt:Date.parse('2026-11-03T00:00:00+05:00')};
+    const post=(b=body,cookie=o)=>call(env,'POST','/api/transfers',{cookie,body:b});
+    for(const [method,path] of [['GET','/api/transfers'],['POST','/api/transfers'],['DELETE','/api/transfers/'+body.id]])expect((await call(env,method,path)).status).toBe(401);
+    expect((await post({...body,accountLogin:'other'},x)).status).toBe(400);
+    expect((await post({...body,accountLogin:'other'})).status).toBe(409);
+    expect((await post({...body,toId:body.fromId})).status).toBe(400);
+    expect((await post({...body,amountMinor:0})).status).toBe(400);
+    expect((await post({...body,occurredAt:Date.parse('2026-10-31')})).status).toBe(400);
+    const first=await post();expect(first.status).toBe(201);expect(Number(first.headers.get('X-Storage-Ops'))).toBeLessThanOrEqual(4);
+    expect((await post()).data.duplicate).toBe(true);
+    expect((await post({...body,amountMinor:100})).status).toBe(409);
+    expect((await call(env,'GET','/api/transfers',{cookie:x})).data.items).toEqual([]);
+    expect((await call(env,'DELETE','/api/transfers/'+body.id,{cookie:x})).status).toBe(404);
+    expect((await call(env,'PATCH','/api/entries/'+body.id,{cookie:o,body:{amountMinor:100}})).status).toBe(404);
+    const wallet=(await call(env,'GET','/api/wallet',{cookie:o})).data;
+    expect(wallet.accounts.map((a:any)=>a.balanceMinor)).toEqual([75000,225000]);
+    expect(wallet.accounts.map((a:any)=>[a.in,a.out])).toEqual([[0,0],[0,0]]);
+    expect((await call(env,'GET','/api/reports/summary?month=2026-11',{cookie:o})).data.totals).toMatchObject({in:0,out:0,count:0});
+    expect((await call(env,'GET','/api/entries',{cookie:o})).data.items).toHaveLength(0);
+    expect((await call(env,'GET','/api/transfers',{cookie:o})).data.items).toHaveLength(1);
+    const cancelled=await call(env,'DELETE','/api/transfers/'+body.id,{cookie:o});expect(cancelled.status).toBe(200);
+    expect((await call(env,'DELETE','/api/transfers/'+body.id,{cookie:o})).status).toBe(200);
+    expect((await post()).status).toBe(409);
+    expect((await call(env,'GET','/api/wallet',{cookie:o})).data.accounts.map((a:any)=>a.balanceMinor)).toEqual([100000,200000]);
+    expect((await store.first<any>("SELECT count(*) AS n FROM entries WHERE kind='transfer'")).n).toBe(1);
+  });
   it('кошелёк изолирован; начальные остатки, дата UTC+5, правки и удаления пересчитываются',async()=>{
     const {env,o,x}=await setup();
     expect((await call(env,'GET','/api/wallet')).status).toBe(401);

@@ -9,6 +9,7 @@ import * as cps from './domain/money/counterparties';
 import {historySummary,clearHistory,requireConfirmation} from './domain/money/history';
 import { readProfile, saveProfile } from './domain/money/financial-profile';
 import { walletSummary } from './domain/money/wallet';
+import {createTransfer,listTransfers,cancelTransfer} from './domain/money/transfers';
 import { monthlySummary, unmappedCounterparties } from './domain/money/reports';
 import { shortcutAdd, shortcutSummary } from './domain/money/shortcuts';
 import { currentMonth } from './domain/money/normalize';
@@ -58,6 +59,13 @@ route('DELETE', '/api/keys/:id', 'session', async c => { await auth.revokeKey(c.
 // ---------- Записи ----------
 route('GET', '/api/financial-profile', 'session', async c => json(await readProfile(c.store, acc(c))));
 route('GET', '/api/wallet', 'session', async c => json(await walletSummary(c.store, acc(c))));
+route('GET','/api/transfers','session',async c=>json(await listTransfers(c.store,acc(c))));
+route('POST','/api/transfers','session',async c=>{
+  const b=await readJson(c.req,2048);
+  if(b?.accountLogin!==c.auth!.accountLogin)throw new HttpError(409,'account_changed','Аккаунт изменился. Обновите страницу');
+  const r=await createTransfer(c.store,acc(c),b);return json(r,r.duplicate?200:201);
+});
+route('DELETE','/api/transfers/:id','session',async c=>json(await cancelTransfer(c.store,acc(c),c.params[0])));
 route('PUT', '/api/financial-profile', 'session', async c => json(await saveProfile(c.store, acc(c), await readJson(c.req, 32 * 1024))));
 
 route('GET', '/api/entries', 'session', async c => json(await ent.listTx(c.store, acc(c), c.url.searchParams)));

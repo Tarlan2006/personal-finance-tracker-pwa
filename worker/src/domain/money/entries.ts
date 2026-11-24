@@ -81,6 +81,7 @@ export async function createTx(store: Store, accountId: string, inp: TxInput, so
   const res = await store.batch(insertStatements(store, accountId, id, payload, occurredAt, source));
   const duplicate = !res[0].meta?.changes;
   const row = await store.first<any>('SELECT * FROM entries WHERE account_id = ? AND id = ?', accountId, id);
+  if(row.kind!==KIND_TX)throw new HttpError(409,'id_conflict','Идентификатор уже используется другой записью');
   const meta = await loadMeta(store, accountId);
   return { entry: toDTO(row, meta), duplicate };
 }
@@ -106,7 +107,7 @@ export function toDTO(row: any, meta: Meta): EntryDTO {
 
 export async function updateTx(store: Store, accountId: string, id: string, body: any) {
   const row = await store.first<any>('SELECT * FROM entries WHERE account_id = ? AND id = ? AND deleted_at IS NULL', accountId, id);
-  if (!row) throw new HttpError(404, 'not_found', 'Запись не найдена');
+  if (!row||row.kind!==KIND_TX) throw new HttpError(404, 'not_found', 'Запись не найдена');
   if (body.version !== undefined && Number(body.version) !== row.version)
     throw new HttpError(409, 'version_conflict', 'Запись уже изменена на другом устройстве');
   const old = JSON.parse(row.payload_json) as TxPayload;
@@ -144,7 +145,7 @@ export async function deleteTransactions(store: Store, accountId: string, ids: u
 }
 
 export async function deleteTx(store: Store, accountId: string, id: string) {
-  const r = await store.run('UPDATE entries SET deleted_at = COALESCE(deleted_at, ?), updated_at = ?, version = version + 1 WHERE account_id = ? AND id = ?', now(), now(), accountId, id);
+  const r = await store.run("UPDATE entries SET deleted_at = COALESCE(deleted_at, ?), updated_at = ?, version = version + 1 WHERE account_id = ? AND id = ? AND kind='tx'", now(), now(), accountId, id);
   if (!r.meta?.changes) throw new HttpError(404, 'not_found', 'Запись не найдена');
 }
 

@@ -1,4 +1,6 @@
+export interface AccountBudget { id:string; name:string; amountMinor:number }
 export interface FinancialAccount {
+  budgets?: AccountBudget[];
   id: string; bank: string; name: string; kind: 'card' | 'deposit' | 'account' | 'cash';
   openingBalanceMinor: number | null;
 }

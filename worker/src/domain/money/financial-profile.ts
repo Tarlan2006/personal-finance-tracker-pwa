@@ -33,7 +33,8 @@ export async function saveProfile(store:Store,accountId:string,body:any):Promise
     obj(a);const kind=a.kind;if(!['card','deposit','account','cash'].includes(kind))fail('Неизвестный вид счёта');
     const bank=text(a.bank,'Банк'),name=text(a.name,'Название счёта');
     if(!bank||!name)fail('Укажите банк и название каждого счёта');
-    return {id:text(a.id,'ID счёта'),bank,name,kind,openingBalanceMinor:money(a.openingBalanceMinor,'Остаток',kind==='card'||kind==='account')};
+    const budgets=array(a.budgets??[],20,'бюджеты счёта').map(b=>{obj(b);const name=text(b.name,'Название бюджета',60),amountMinor=money(b.amountMinor,'Бюджет');if(!name||amountMinor===null)fail('Укажите название и сумму бюджета');return {id:text(b.id,'ID бюджета'),name,amountMinor:amountMinor!};});uniqueIds(budgets);
+    return {id:text(a.id,'ID счёта'),bank,name,kind,openingBalanceMinor:money(a.openingBalanceMinor,'Остаток',kind==='card'||kind==='account'),...(a.budgets!==undefined?{budgets}:{})};
   });uniqueIds(accounts);
   const expenseCategoryIds=array(p.expenseCategoryIds,100,'категории').map(id=>category(id,'expense'));
   if(new Set(expenseCategoryIds).size!==expenseCategoryIds.length)fail('Категории не должны повторяться');
