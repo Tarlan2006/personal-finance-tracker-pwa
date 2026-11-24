@@ -1,5 +1,13 @@
 import { afterEach, expect, it, vi } from 'vitest';
 afterEach(()=>{vi.unstubAllGlobals();vi.resetModules();});
+it('записи автоматически несут логин, включая DELETE и batch; прежний логин очереди не перезаписывается',async()=>{
+  const fetch=vi.fn().mockImplementation(()=>Promise.resolve(Response.json({ok:true})));vi.stubGlobal('fetch',fetch);
+  const {api,setAccountLoginProvider}=await import('../src/api');setAccountLoginProvider(()=>'owner');
+  for(const method of ['POST','PUT','PATCH','DELETE'])await api(method,'/api/example',{value:1});
+  await api('DELETE','/api/example');await api('POST','/api/entries/batch',{accountLogin:'old',items:[{login:'old'}]});
+  for(const call of fetch.mock.calls.slice(0,5))expect(JSON.parse(call[1].body).accountLogin).toBe('owner');
+  expect(JSON.parse(fetch.mock.calls[5][1].body)).toMatchObject({accountLogin:'old',items:[{login:'old'}]});
+});
 it('GET до записи не подменяет обновление после записи; старый ответ не удаляет новый запрос',async()=>{
   let resolveOld!:(r:Response)=>void, resolveFresh!:(r:Response)=>void;
   const oldResponse=new Promise<Response>(r=>{resolveOld=r;}),freshResponse=new Promise<Response>(r=>{resolveFresh=r;});

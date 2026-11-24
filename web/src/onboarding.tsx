@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FinancialProfile, FinancialProfileRecord } from '../../shared/financial-profile';
-import { api } from './api';
-import { Field, fmt, inputMinor, setState, todayStr, useAppState } from './ui';
+import { api,ApiError } from './api';
+import { Field, fmt, inputMinor, setState, todayStr, useAppState,Sheet } from './ui';
 import { CreateCategorySheet } from './category-create';
 
 export const emptyProfile=():FinancialProfile=>({balanceDate:todayStr(),accounts:[],expenseCategoryIds:[],monthlyBudgetMinor:null,incomes:[],obligations:[],householdSize:1,goal:'',goalTargetMinor:null,monthlySavingMinor:null});
@@ -23,20 +23,22 @@ export function FinancialQuestionnaire({record,onDone}:{record:FinancialProfileR
     return {...p,expenseCategoryIds:p.expenseCategoryIds.filter(id=>cats.some(c=>c.id===id&&c.type==='expense')),incomes:p.incomes.map(i=>({...i,categoryId:cats.some(c=>c.id===i.categoryId&&c.type==='income')?i.categoryId:''}))};
   });
   const [version,setVersion]=useState(record.version),[step,setStep]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  const [removal,setRemoval]=useState<{status:'draft'|'complete'|'deferred';accounts:Array<{id:string;name:string;operations:number;transfers:number}>}|null>(null),[decisions,setDecisions]=useState<Record<string,string>>({});
   const saving=useRef(false);
   const [creatingCategory,setCreatingCategory]=useState(false);
   const heading=useRef<HTMLHeadingElement>(null),form=useRef<HTMLFormElement>(null);
   useEffect(()=>{heading.current?.focus({preventScroll:true});window.scrollTo(0,0);},[step]);
   const patch=(p:Partial<FinancialProfile>)=>setProfile(x=>({...x,...p}));
-  async function save(status:'draft'|'complete'|'deferred'){
+  async function save(status:'draft'|'complete'|'deferred',accountResolutions?:Array<{id:string;targetId:string|null}>){
     if(saving.current||!form.current?.reportValidity())return;saving.current=true;
     setBusy(true);setError('');
-    try{const saved=await api<FinancialProfileRecord>('PUT','/api/financial-profile',{version,status,profile});setVersion(saved.version);setState({financialProfile:saved,...(status==='draft'?{}:{onboardingRequired:false})});
+    try{const saved=await api<FinancialProfileRecord>('PUT','/api/financial-profile',{version,status,profile,accountResolutions});setRemoval(null);setVersion(saved.version);setState({financialProfile:saved,...(status==='draft'?{}:{onboardingRequired:false})});
       if(status==='draft')setStep(s=>s+1);else onDone();
-    }catch(e){setError((e as Error).message);}finally{saving.current=false;setBusy(false);}
+    }catch(e){setError((e as Error).message);if(e instanceof ApiError&&e.code==='account_in_use'&&Array.isArray(e.details?.removedAccounts)){setRemoval({status,accounts:e.details!.removedAccounts});setDecisions({});}}finally{saving.current=false;setBusy(false);}
   }
   const expense=cats.filter(c=>c.type==='expense'),income=cats.filter(c=>c.type==='income');
   return <div className="questionnaire">
+    {removal&&<Sheet title="Удаление счёта" busy={busy} onClose={()=>setRemoval(null)}><p>Выберите судьбу операций. Начальные остатки автоматически не складываются. Переводы сохранятся; при объединении обоих счетов их вклад в остаток станет нулевым.</p>{removal.accounts.map(a=><Field key={a.id} label={`${a.name}: операций ${a.operations}, переводов ${a.transfers}`}><select aria-label={'Действие для '+a.name} value={decisions[a.id]??''} onChange={e=>setDecisions(d=>({...d,[a.id]:e.target.value}))}><option value="">Выберите действие</option><option value="unassigned">Оставить без счёта</option>{profile.accounts.map(target=><option key={target.id} value={'account:'+target.id}>Перенести на {target.bank} · {target.name}</option>)}</select></Field>)}{error&&<p className="err" role="alert">{error}</p>}<button className="btn" disabled={busy||removal.accounts.some(a=>!decisions[a.id])} onClick={()=>void save(removal.status,removal.accounts.map(a=>({id:a.id,targetId:decisions[a.id]==='unassigned'?null:decisions[a.id].slice(8)})))}>Применить решение</button></Sheet>}
     <div className="screen-kicker">ЗНАКОМСТВО С ВАШИМИ ФИНАНСАМИ</div>
     <div className="questionnaire-progress" aria-label={`Шаг ${step+1} из 5`}>{steps.map((s,i)=><span key={s} className={i<=step?'active':''}/>)}</div>
     <p className="sub">Шаг {step+1} из 5 · {steps[step]}</p>

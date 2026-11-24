@@ -301,7 +301,7 @@ test('фильтр ленты находит доход за пределами 
   await page.evaluate(async()=>{
     const occurredAt=Date.now();
     for(let start=0;start<55;start+=50){
-      const items=Array.from({length:Math.min(50,55-start)},(_,j)=>({id:`pagination-ui2-${start+j}`,direction:start+j===54?'in':'out',amountMinor:100,counterparty:start+j===54?'PAGINATION UI2 IN':'PAGINATION UI2 OUT',occurredAt:occurredAt-(start+j)*1000}));
+      const items=Array.from({length:Math.min(50,55-start)},(_,j)=>({login:'owner',id:`pagination-ui2-${start+j}`,direction:start+j===54?'in':'out',amountMinor:100,counterparty:start+j===54?'PAGINATION UI2 IN':'PAGINATION UI2 OUT',occurredAt:occurredAt-(start+j)*1000}));
       const response=await fetch('/api/entries/batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})});
       const data=await response.json();if(!response.ok||data.results.some((r:any)=>!r.ok))throw new Error('Pagination fixture failed');
     }

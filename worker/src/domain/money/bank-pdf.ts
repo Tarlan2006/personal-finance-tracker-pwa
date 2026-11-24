@@ -2,26 +2,38 @@ import { freedomRows, finishFreedomRows, type FreedomRow } from './freedom-pdf';
 import { MAX_IMPORT_ROWS } from './import-limits';
 import { getDocumentProxy } from 'unpdf';
 import { HttpError } from '../../env';
+import { PdfBudget, PDF_MAX_BYTES, PDF_MAX_PAGES } from './pdf-budget';
 
 /** Only layouts verified against the supplied bank PDFs. No OCR or remote fetch. */
 export async function bankPdf(base64: string, bank: string): Promise<string> {
-  if (base64.length > 2800000) throw new HttpError(413, 'file_too_large', 'PDF не больше 2 МБ');
+  const budget = new PdfBudget();
+  if (base64.length > Math.ceil(PDF_MAX_BYTES / 3) * 4) throw new HttpError(413, 'file_too_large', 'PDF не больше 2 МБ; разделите выписку на части');
   let data: Uint8Array;
   try { data = Uint8Array.from(atob(base64), c => c.charCodeAt(0)); } catch { throw new HttpError(400, 'bad_pdf', 'Некорректный PDF'); }
-  if (data.length > 2 * 1024 * 1024) throw new HttpError(413, 'file_too_large', 'PDF не больше 2 МБ');
+  if (data.length > PDF_MAX_BYTES) throw new HttpError(413, 'file_too_large', 'PDF не больше 2 МБ; разделите выписку на части');
   if (new TextDecoder().decode(data.slice(0, 5)) !== '%PDF-') throw new HttpError(400, 'bad_pdf', 'Нужен PDF');
+  budget.check();
+  const opening = getDocumentProxy(data, { verbosity: 0, maxImageSize: 0, useSystemFonts: false, useWorkerFetch: false });
   let pdf;
-  try { pdf = await getDocumentProxy(data, { verbosity: 0, maxImageSize: 0, useSystemFonts: false, useWorkerFetch: false }); } catch { throw new HttpError(400, 'bad_pdf', 'Не удалось прочитать PDF'); }
+  try { pdf = await budget.wait(opening); } catch (e) {
+    void opening.then(doc => doc.cleanup()).catch(() => {});
+    if (e instanceof HttpError) throw e;
+    throw new HttpError(400, 'bad_pdf', 'Не удалось прочитать PDF');
+  }
   try {
-    if (pdf.numPages > 100) throw new HttpError(413, 'too_many_pages', 'Не больше 100 страниц');
+    if (pdf.numPages > PDF_MAX_PAGES) throw new HttpError(413, 'too_many_pages', 'Не больше 100 страниц; разделите выписку на части');
+    let totalItems = 0;
     const rows: string[][] = []; const freedom: FreedomRow[] = []; let tables = 0; let signature = false;let russianGold=false;
     for (let p = 1; p <= pdf.numPages; p++) {
-      const page = await pdf.getPage(p); const content = await page.getTextContent();
+      budget.check();
+      const page = await budget.wait(pdf.getPage(p)); const content = await budget.wait(page.getTextContent());
+      totalItems += content.items.length;
+      if (content.items.length > 20000 || totalItems > 100000) throw new HttpError(413, 'pdf_too_complex', 'Слишком сложный PDF. Разделите выписку на части или загрузите CSV.');
       const items = content.items.filter((t): t is typeof t & {str: string; transform: number[]} => 'str' in t);
       if (items.some(t => (bank === 'halyk' ? /halyk|халық|халык/i : bank === 'freedom' ? /freedom|фридом/i : /kaspi/i).test(t.str))) signature = true;
       if (items.length > 20000) throw new HttpError(413, 'pdf_too_complex', 'Слишком сложная страница PDF');
       if (bank === 'freedom') {
-        if (items.some(t => t.str.trim() === 'Детали') || items.some(t => t.transform[4]<132 && /^\d{2}\.\d{2}\.\d{4}$/.test(t.str.trim()))) { freedom.push(...await freedomRows(page, items, MAX_IMPORT_ROWS*2-freedom.length, tables>0)); tables++; }
+        if (items.some(t => t.str.trim() === 'Детали') || items.some(t => t.transform[4]<132 && /^\d{2}\.\d{2}\.\d{4}$/.test(t.str.trim()))) { freedom.push(...await budget.wait(freedomRows(page, items, MAX_IMPORT_ROWS*2-freedom.length, tables>0))); tables++; }
         else if(p>1) throw new HttpError(400,'unknown_layout','Страница Freedom без шапки таблицы');
         page.cleanup();continue;
       }
@@ -38,6 +50,7 @@ export async function bankPdf(base64: string, bank: string): Promise<string> {
       const groups: Array<{ y: number; cells: string[][] }> = [];
       const top=header?header.transform[5]-3:page.getViewport({scale:1}).height-20;
       for (const t of items.filter(t => t.str.trim() && t.transform[5] < top).sort((a,b) => b.transform[5]-a.transform[5] || a.transform[4]-b.transform[4])) {
+        budget.check();
         const x = t.transform[4], y = t.transform[5];
         let g = groups.find(g => Math.abs(g.y-y) < 2);
         if (!g) { g = { y, cells: [[],[],[],[],[],[],[],[],[]] }; groups.push(g); }
@@ -50,6 +63,7 @@ export async function bankPdf(base64: string, bank: string): Promise<string> {
         if(!dated.length||dated.some(g=>!/^\s*[+\-−]/.test(g.cells[1].join(' '))))throw new HttpError(400,'unknown_layout','Не подтверждены колонки продолжения Kaspi');
       }
       for (const g of groups) {
+        budget.check();
         if (rows.length >= MAX_IMPORT_ROWS) throw new HttpError(413, 'too_many_rows', `Не больше ${MAX_IMPORT_ROWS} текстовых строк; разделите выписку на части`);
         const c = g.cells.map(a => a.join(' ').trim());
         // Every text line is accounted for. Only lines without operation data can
@@ -76,6 +90,10 @@ export async function bankPdf(base64: string, bank: string): Promise<string> {
     }
     if (!signature || !tables) throw new HttpError(400, 'unknown_layout', 'Не распознана выписка выбранного банка с текстовым слоем');
     if(bank==='freedom')rows.push(...finishFreedomRows(freedom));
+    budget.check();
     return 'Дата;Сумма;Контрагент;Описание;Зачисление;Списание;Причина;Класс строки\n' + rows.map(r => r.map(c => '"'+c.replace(/"/g,'""')+'"').join(';')).join('\n');
-  } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(400, 'bad_pdf', 'Не удалось разобрать PDF'); } finally { await pdf.cleanup(); }
+  } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(400, 'bad_pdf', 'Не удалось разобрать PDF'); } finally {
+    // Cleanup must not hold the response open after a parser timeout.
+    void pdf.cleanup().catch(() => {});
+  }
 }

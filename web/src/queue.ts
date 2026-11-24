@@ -149,7 +149,7 @@ export async function flush(login: string): Promise<void> {
     for (let i = 0; i < items.length; i += 50) {
       if(!isCurrent())return;
       const chunk = items.slice(i, i + 50);
-      const r: { results: Array<{ id: string; ok: boolean; duplicate?: boolean; error?: string }> } = await api('POST', '/api/entries/batch', { items: chunk.map(c => c.payload) });
+      const r: { results: Array<{ id: string; ok: boolean; duplicate?: boolean; error?: string }> } = await api('POST', '/api/entries/batch', {accountLogin:login,items: chunk.map(c => ({...c.payload,login:c.login})) });
       for (const res of r.results) {
         if(!isCurrent())return;
         const it = chunk.find(c => c.id === res.id); if (!it) continue;
@@ -187,11 +187,12 @@ async function aesKey(queueKey: string) {
 export async function sealQueue(login: string, queueKey: string) {
   stopQueue();
   const items = await listQueue(login);
-  if (!items.length) { await tx('meta', 'readwrite', s => { s.delete('sealed:' + login); }); return 0; }
+  if (!items.length) return 0; // Never erase a sealed queue that has not been restored.
+  if(await metaGet('sealed:'+login))throw new Error('Сначала восстановите сохранённую очередь повторным входом');
+  if(!queueKey)throw new Error('Подтвердите пароль для защиты очереди перед выходом');
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(queueKey), new TextEncoder().encode(JSON.stringify(items)));
-  await metaPut('sealed:' + login, { iv: Array.from(iv), ct: Array.from(new Uint8Array(ct)) });
-  for (const i of items) await del(i.id);
+  await queueTransaction((queue,meta)=>{meta.put({iv:Array.from(iv),ct:Array.from(new Uint8Array(ct))},'sealed:'+login);for(const i of items)queue.delete(i.id);});
   currentLogin = null; status = { ...status, count: 0, failed: 0, nextAttemptAt: null }; emit();
   return items.length;
 }
@@ -200,9 +201,21 @@ export async function unsealQueue(login: string, queueKey: string) {
   try {
     const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(blob.iv) }, await aesKey(queueKey), new Uint8Array(blob.ct));
     const items: QItem[] = JSON.parse(new TextDecoder().decode(pt));
-    for (const i of items) await put(i);
-    await tx('meta', 'readwrite', s => { s.delete('sealed:' + login); });
+    if(!Array.isArray(items)||items.some(i=>i.login!==login))throw new Error('Очередь другого аккаунта');
+    await queueTransaction((queue,meta)=>{for(const i of items)queue.put(i);meta.delete('sealed:'+login);});
     return items.length;
   } catch { return 0; }
+}
+async function queueTransaction(action:(queue:IDBObjectStore,meta:IDBObjectStore)=>void){
+  const db=await open();return new Promise<void>((resolve,reject)=>{try{const t=db.transaction(['queue','meta'],'readwrite');t.oncomplete=()=>{db.close();resolve();};t.onabort=()=>{db.close();reject(t.error??new Error('Не удалось сохранить очередь'));};action(t.objectStore('queue'),t.objectStore('meta'));}catch(e){db.close();reject(e);}});
+}
+export async function reencryptQueue(login:string,newKey:string,recoveryKeys:string[]=[]){
+  const blob=await metaGet('sealed:'+login);if(!blob)return;
+  let plain:ArrayBuffer|undefined;
+  for(const key of [newKey,...recoveryKeys]){try{plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:new Uint8Array(blob.iv)},await aesKey(key),new Uint8Array(blob.ct));break;}catch{/* Try a retained key from an older password. */}}
+  if(!plain)throw new Error('Не удалось восстановить зашифрованную очередь. Данные сохранены');
+  const items:QItem[]=JSON.parse(new TextDecoder().decode(plain));if(!Array.isArray(items)||items.some(i=>i.login!==login))throw new Error('Очередь другого аккаунта');
+  const iv=crypto.getRandomValues(new Uint8Array(12)),ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},await aesKey(newKey),plain);
+  await metaPut('sealed:'+login,{iv:Array.from(iv),ct:Array.from(new Uint8Array(ct))});
 }
 export const rawQueueDump = async () => JSON.stringify(await getAll()); // для тестов: убедиться, что открытого текста нет

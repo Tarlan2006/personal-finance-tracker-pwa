@@ -2,6 +2,7 @@ import { HttpError, Store, type Env } from './env';
 import { json, text, readJson, readBody, parseJsonObject, SECURITY_HEADERS, cookie, getCookie } from './util';
 import * as auth from './auth';
 import { rateLimit } from './ratelimit';
+import {cleanupAfterLogin} from './maintenance';
 import * as cats from './domain/money/categories';
 import * as ent from './domain/money/entries';
 import * as imp from './domain/money/import';
@@ -9,7 +10,7 @@ import * as cps from './domain/money/counterparties';
 import {historySummary,clearHistory,requireConfirmation} from './domain/money/history';
 import { readProfile, saveProfile } from './domain/money/financial-profile';
 import { walletSummary } from './domain/money/wallet';
-import {createTransfer,listTransfers,cancelTransfer} from './domain/money/transfers';
+import {createTransfer,listTransfers,cancelTransfer,updateTransfer} from './domain/money/transfers';
 import { monthlySummary, unmappedCounterparties } from './domain/money/reports';
 import { shortcutAdd, shortcutSummary } from './domain/money/shortcuts';
 import { currentMonth } from './domain/money/normalize';
@@ -31,15 +32,16 @@ route('POST', '/api/auth/login', 'public', async c => {
   await rateLimit(c.store, 'login:' + ip, 30, 10 * 60_000);
   const b = await readJson(c.req, 2048);
   const r = await auth.login(c.store, b.login, b.password, b.device);
-  return json({ ok: true, queueKey: r.queueKey }, 200, { 'Set-Cookie': cookie(auth.COOKIE, r.token, auth.SESSION_TTL_MS / 1000) });
+  await cleanupAfterLogin(c.store,r.accountId).catch(()=>{}); // Housekeeping failure must not break an authenticated login.
+  return json({ ok: true, queueKey: r.queueKey,queueRecoveryKeys:r.queueRecoveryKeys }, 200, { 'Set-Cookie': cookie(auth.COOKIE, r.token, auth.SESSION_TTL_MS / 1000) });
 });
 route('POST', '/api/auth/logout', 'session', async c => {
   await c.store.run('UPDATE sessions SET revoked_at = ? WHERE id = ?', Date.now(), c.auth!.sessionId);
   return json({ ok: true }, 200, { 'Set-Cookie': cookie(auth.COOKIE, '', 0) });
 });
 route('GET', '/api/me', 'session', async c => {
-  const a = await c.store.first<any>('SELECT login, display_name, queue_key FROM accounts WHERE id = ?', acc(c));
-  return json({ login: a.login, name: a.display_name, queueKey: a.queue_key, sessionId: c.auth!.sessionId });
+  const a = await c.store.first<any>('SELECT login, display_name FROM accounts WHERE id = ?', acc(c));
+  return json({ login: a.login, name: a.display_name, sessionId: c.auth!.sessionId });
 });
 route('POST', '/api/auth/password', 'session', async c => {
   await rateLimit(c.store, 'pw:' + acc(c), 10, 10 * 60_000);
@@ -65,7 +67,8 @@ route('POST','/api/transfers','session',async c=>{
   if(b?.accountLogin!==c.auth!.accountLogin)throw new HttpError(409,'account_changed','Аккаунт изменился. Обновите страницу');
   const r=await createTransfer(c.store,acc(c),b);return json(r,r.duplicate?200:201);
 });
-route('DELETE','/api/transfers/:id','session',async c=>json(await cancelTransfer(c.store,acc(c),c.params[0])));
+route('PATCH','/api/transfers/:id','session',async c=>json(await updateTransfer(c.store,acc(c),c.params[0],await readJson(c.req,4096))));
+route('DELETE','/api/transfers/:id','session',async c=>json(await cancelTransfer(c.store,acc(c),c.params[0],await readJson(c.req,512))));
 route('PUT', '/api/financial-profile', 'session', async c => json(await saveProfile(c.store, acc(c), await readJson(c.req, 32 * 1024))));
 
 route('GET', '/api/entries', 'session', async c => json(await ent.listTx(c.store, acc(c), c.url.searchParams)));
@@ -80,6 +83,7 @@ route('POST', '/api/entries', 'session', async c => {
 route('POST', '/api/entries/batch', 'session', async c => {
   const b = await readJson(c.req, 256 * 1024);
   if (!Array.isArray(b.items) || b.items.length > 50) throw new HttpError(400, 'bad_batch', 'До 50 записей за раз');
+  if(b.items.some((it:any)=>!it||it.login!==c.auth!.accountLogin))throw new HttpError(409,'account_changed','Очередь содержит операции другого аккаунта. Пачка не сохранена');
   const results = [];
   for (const it of b.items) {
     try { const r = await ent.createTx(c.store, acc(c), it); results.push({ id: r.entry.id, ok: true, duplicate: r.duplicate }); }
@@ -167,6 +171,10 @@ export async function handleApi(req: Request, env: Env): Promise<Response> {
     if (r.mode === 'session') {
       a = await auth.sessionFromRequest(store, req);
       if (!a) throw new HttpError(401, 'unauthorized', 'Требуется вход');
+      if(['POST','PUT','PATCH','DELETE'].includes(req.method)){
+        const b=await readJson(req,3*1024*1024);
+        if(b.accountLogin!==undefined&&b.accountLogin!==a.accountLogin)throw new HttpError(409,'account_changed','Аккаунт изменился. Обновите страницу перед сохранением');
+      }
     } else if (r.mode === 'key') {
       a = await auth.keyFromRequest(store, req);
       if (!a) throw new HttpError(401, 'bad_key', 'Неверный или отозванный ключ');
@@ -177,7 +185,7 @@ export async function handleApi(req: Request, env: Env): Promise<Response> {
     return res;
   } catch (e) {
     if (e instanceof HttpError) {
-      const body = isShortcut ? text(`Ошибка: ${KEY_MSG[e.code] ?? e.message}`, e.status, e.headers) : json({ error: e.code, message: e.message }, e.status, e.headers);
+      const body = isShortcut ? text(`Ошибка: ${KEY_MSG[e.code] ?? e.message}`, e.status, e.headers) : json({ error: e.code, message: e.message,...(e.details?{details:e.details}:{}) }, e.status, e.headers);
       body.headers.set('X-Storage-Ops', String(store.ops));
       return body;
     }

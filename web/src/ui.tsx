@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { lockScroll } from './scroll-lock';
-import { api } from './api';
+import { api,setAccountLoginProvider } from './api';
 import type { FinancialProfileRecord } from '../../shared/financial-profile';
 
 export const fmt = (minor: number) => {
@@ -18,6 +18,7 @@ export interface Cat { id: string; name: string; type: 'expense' | 'income'; col
 interface State { selectedAccount: string|null; login: string | null; name: string; queueKey: string; cats: Cat[]; ready: boolean; version: number; financialProfile: FinancialProfileRecord | null; onboardingRequired:boolean;activeImports:number }
 let state: State = { selectedAccount:null, login: null, name: '', queueKey: '', cats: [], ready: false, version: 0, financialProfile:null, onboardingRequired:false,activeImports:0 };
 const subs = new Set<() => void>();
+setAccountLoginProvider(()=>state.login);
 export const getState = () => state;
 export const setState = (p: Partial<State>) => { state = { ...state, ...(p.login !== undefined && p.login !== state.login ? {selectedAccount:null} : {}), ...p }; subs.forEach(f => f()); };
 export const bump = () => setState({ version: state.version + 1 }); // сигнал «данные изменились»

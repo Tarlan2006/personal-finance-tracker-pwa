@@ -17,6 +17,60 @@ const walletProfile = { balanceDate:'2026-11-01', accounts:[
 ],expenseCategoryIds:[],monthlyBudgetMinor:null,incomes:[],obligations:[],householdSize:1,goal:'',goalTargetMinor:null,monthlySavingMinor:null };
 
 describe('счета и детализация отчёта',()=>{
+  it.each([null,'wallet-deposit'])('удаление счёта требует решения; операции и переводы переезжают атомарно: %s',async(targetId)=>{
+    const {env,o,x}=await setup();await call(env,'PUT','/api/financial-profile',{cookie:o,body:{version:0,status:'deferred',profile:walletProfile}});
+    await call(env,'POST','/api/entries',{cookie:o,body:{id:'removal-entry-01',financialAccountId:'wallet-kaspi',amountMinor:100,direction:'out'}});
+    await call(env,'POST','/api/transfers',{cookie:o,body:{id:'removal-transfer-01',accountLogin:'owner',fromId:'wallet-kaspi',toId:'wallet-deposit',amountMinor:200,occurredAt:Date.parse('2026-11-03')}});
+    const profile={...walletProfile,accounts:walletProfile.accounts.slice(1)},body={version:1,status:'deferred',profile};
+    const blocked=await call(env,'PUT','/api/financial-profile',{cookie:o,body});expect(blocked.status).toBe(409);expect(blocked.data.details.removedAccounts).toEqual([expect.objectContaining({id:'wallet-kaspi',operations:1,transfers:1})]);
+    expect((await call(env,'GET','/api/financial-profile',{cookie:o})).data.profile.accounts).toHaveLength(2);
+    const resolution={...body,accountResolutions:[{id:'wallet-kaspi',targetId}]};
+    expect((await call(env,'PUT','/api/financial-profile',{cookie:x,body:resolution})).status).toBe(409);
+    expect((await call(env,'PUT','/api/financial-profile',{cookie:o,body:resolution})).status).toBe(200);
+    const tx=(await call(env,'GET','/api/entries?financialAccountId='+encodeURIComponent(targetId??''),{cookie:o})).data.items[0];expect(tx.payload.financialAccountId).toBe(targetId);expect(tx.version).toBe(2);
+    expect((await call(env,'GET','/api/transfers',{cookie:o})).data.items[0]).toMatchObject({fromId:targetId,toId:'wallet-deposit',version:2});
+    const w=(await call(env,'GET','/api/wallet',{cookie:o})).data;expect(w.accounts[0].balanceMinor).toBe(targetId?199900:200200);expect(w.unassigned).toBe(targetId?0:1);
+    expect((await call(env,'PUT','/api/financial-profile',{cookie:o,body:resolution})).status).toBe(409);
+    expect((await call(env,'GET','/api/entries',{cookie:o})).data.items[0].version).toBe(2);
+  });
+  it('общая проверка accountLogin блокирует все изменяющие session-маршруты до записи',async()=>{
+    const {env,o}=await setup();
+    const routes=[['POST','/api/auth/logout'],['POST','/api/auth/password'],['DELETE','/api/devices/x'],['POST','/api/keys'],['DELETE','/api/keys/x'],['PUT','/api/financial-profile'],['POST','/api/transfers'],['PATCH','/api/transfers/x'],['DELETE','/api/transfers/x'],['POST','/api/entries'],['PATCH','/api/entries/x'],['DELETE','/api/entries/x'],['POST','/api/entries/batch'],['POST','/api/entries/delete'],['POST','/api/categories'],['PATCH','/api/categories/x'],['DELETE','/api/categories/x'],['POST','/api/rules'],['DELETE','/api/rules/x'],['POST','/api/import'],['DELETE','/api/import/batches/x'],['POST','/api/history/clear']];
+    for(const [method,path] of routes){const r=await call(env,method,path,{cookie:o,body:{accountLogin:'other'}});expect(r.status,path).toBe(409);expect(r.data.error).toBe('account_changed');}
+    const item={id:'mixed-batch-01',direction:'out',amountMinor:100};
+    for(const second of [{...item,id:'mixed-batch-02',login:'other'},{...item,id:'mixed-batch-02'}])expect((await call(env,'POST','/api/entries/batch',{cookie:o,body:{accountLogin:'owner',items:[{...item,login:'owner'},second]}})).status).toBe(409);
+    expect((await call(env,'GET','/api/entries',{cookie:o})).data.items).toHaveLength(0);
+  });
+  it('правка перевода изолирована, комментарий сохраняется, версии защищают правку и отмену',async()=>{
+    const {env,o,x}=await setup();await call(env,'PUT','/api/financial-profile',{cookie:o,body:{version:0,status:'deferred',profile:walletProfile}});
+    const id='transfer-edit-01',path='/api/transfers/'+id,body={id,accountLogin:'owner',fromId:'wallet-kaspi',toId:'wallet-deposit',amountMinor:500,occurredAt:Date.parse('2026-11-03'),comment:'Накопления'};
+    await call(env,'POST','/api/transfers',{cookie:o,body});
+    expect((await call(env,'PATCH',path,{body:{version:1,amountMinor:100}})).status).toBe(401);
+    expect((await call(env,'PATCH',path,{cookie:x,body:{version:1,amountMinor:100}})).status).toBe(404);
+    expect((await call(env,'PATCH',path,{cookie:o,body:{amountMinor:100}})).status).toBe(400);
+    expect((await call(env,'PATCH',path,{cookie:o,body:{version:1,amountMinor:800,comment:'Уточнено'}})).status).toBe(200);
+    expect((await call(env,'PATCH',path,{cookie:o,body:{version:1,amountMinor:800,comment:'Уточнено'}})).status).toBe(200);
+    expect((await call(env,'PATCH',path,{cookie:o,body:{version:1,amountMinor:900}})).status).toBe(409);
+    expect((await call(env,'DELETE',path,{cookie:o,body:{version:1}})).status).toBe(409);
+    expect((await call(env,'DELETE',path,{cookie:o,body:{}})).status).toBe(400);
+    expect((await call(env,'GET','/api/transfers',{cookie:o})).data.items[0]).toMatchObject({version:2,comment:'Уточнено'});
+    expect((await call(env,'GET','/api/wallet',{cookie:o})).data.accounts.map((a:any)=>a.balanceMinor)).toEqual([99200,200800]);
+    expect((await call(env,'GET','/api/export.csv',{cookie:o})).data).not.toContain(id);
+    expect((await call(env,'GET','/api/reports/summary?month=2026-11',{cookie:o})).data.totals).toMatchObject({in:0,out:0,count:0});
+    expect((await call(env,'DELETE',path,{cookie:o,body:{version:2}})).status).toBe(200);
+    expect((await call(env,'GET','/api/wallet',{cookie:o})).data.accounts.map((a:any)=>a.balanceMinor)).toEqual([100000,200000]);
+  });
+  it('поиск ограничен датами, лимитом и индексируемым счётом',async()=>{
+    const {env,o,x,store}=await setup();await call(env,'PUT','/api/financial-profile',{cookie:o,body:{version:0,status:'deferred',profile:walletProfile}});
+    for(const [id,account,date] of [['search-new-card','wallet-kaspi',Date.now()-1000],['search-new-depo','wallet-deposit',Date.now()-1000],['search-old-card','wallet-kaspi',Date.now()-400*864e5]] as const)await call(env,'POST','/api/entries',{cookie:o,body:{id,financialAccountId:account,occurredAt:date,counterparty:'Тест %_ поиск',direction:'out',amountMinor:100}});
+    const path='/api/entries?q='+encodeURIComponent('%_')+'&financialAccountId=wallet-kaspi&limit=1';
+    expect((await call(env,'GET',path,{cookie:o})).data.items.map((e:any)=>e.id)).toEqual(['search-new-card']);
+    expect((await call(env,'GET',path,{cookie:x})).data.items).toEqual([]);
+    expect((await call(env,'GET',path+'&from=0&to='+Date.now(),{cookie:o})).status).toBe(400);
+    expect((await call(env,'GET',path+'&from='+(Date.now()-401*864e5)+'&to='+(Date.now()-399*864e5),{cookie:o})).data.items[0].id).toBe('search-old-card');
+    const plan=await store.all<any>("EXPLAIN QUERY PLAN SELECT * FROM entries WHERE account_id=? AND kind='tx' AND deleted_at IS NULL AND financial_account_id=? AND occurred_at>=? AND occurred_at<? AND search LIKE ? ORDER BY occurred_at DESC,id DESC LIMIT 2",'a','wallet-kaspi',0,1,'%тест%');
+    expect(plan.map(r=>r.detail).join(' ')).toContain('idx_entries_financial_time');
+  });
   it('бюджеты сохраняются на своём счёте, валидируются и не меняют остаток',async()=>{
     const {env,o,x}=await setup();
     const profile=structuredClone(walletProfile) as any;
@@ -46,7 +100,7 @@ describe('счета и детализация отчёта',()=>{
     expect((await post()).data.duplicate).toBe(true);
     expect((await post({...body,amountMinor:100})).status).toBe(409);
     expect((await call(env,'GET','/api/transfers',{cookie:x})).data.items).toEqual([]);
-    expect((await call(env,'DELETE','/api/transfers/'+body.id,{cookie:x})).status).toBe(404);
+    expect((await call(env,'DELETE','/api/transfers/'+body.id,{cookie:x,body:{version:1}})).status).toBe(404);
     expect((await call(env,'PATCH','/api/entries/'+body.id,{cookie:o,body:{amountMinor:100}})).status).toBe(404);
     const wallet=(await call(env,'GET','/api/wallet',{cookie:o})).data;
     expect(wallet.accounts.map((a:any)=>a.balanceMinor)).toEqual([75000,225000]);
@@ -54,8 +108,8 @@ describe('счета и детализация отчёта',()=>{
     expect((await call(env,'GET','/api/reports/summary?month=2026-11',{cookie:o})).data.totals).toMatchObject({in:0,out:0,count:0});
     expect((await call(env,'GET','/api/entries',{cookie:o})).data.items).toHaveLength(0);
     expect((await call(env,'GET','/api/transfers',{cookie:o})).data.items).toHaveLength(1);
-    const cancelled=await call(env,'DELETE','/api/transfers/'+body.id,{cookie:o});expect(cancelled.status).toBe(200);
-    expect((await call(env,'DELETE','/api/transfers/'+body.id,{cookie:o})).status).toBe(200);
+    const cancelled=await call(env,'DELETE','/api/transfers/'+body.id,{cookie:o,body:{version:1}});expect(cancelled.status).toBe(200);
+    expect((await call(env,'DELETE','/api/transfers/'+body.id,{cookie:o,body:{version:1}})).status).toBe(200);
     expect((await post()).status).toBe(409);
     expect((await call(env,'GET','/api/wallet',{cookie:o})).data.accounts.map((a:any)=>a.balanceMinor)).toEqual([100000,200000]);
     expect((await store.first<any>("SELECT count(*) AS n FROM entries WHERE kind='transfer'")).n).toBe(1);
@@ -76,8 +130,8 @@ describe('счета и детализация отчёта',()=>{
     expect((await call(env,'GET','/api/entries?financialAccountId=wallet-kaspi',{cookie:x})).data.items).toEqual([]);
     expect((await call(env,'GET','/api/entries?financialAccountId=wallet-deposit',{cookie:o})).data.items).toHaveLength(1);
     expect((await call(env,'POST','/api/entries',{cookie:x,body:{financialAccountId:'wallet-kaspi',direction:'out',amountMinor:100}})).status).toBe(400);
-    expect((await call(env,'PATCH','/api/entries/wallet-tx-boundary',{cookie:o,body:{financialAccountId:'not-owned'}})).status).toBe(400);
-    await call(env,'PATCH','/api/entries/wallet-tx-boundary',{cookie:o,body:{financialAccountId:'wallet-deposit'}});
+    expect((await call(env,'PATCH','/api/entries/wallet-tx-boundary',{cookie:o,body:{version:1,financialAccountId:'not-owned'}})).status).toBe(400);
+    await call(env,'PATCH','/api/entries/wallet-tx-boundary',{cookie:o,body:{version:1,financialAccountId:'wallet-deposit'}});
     wallet=await read();expect(wallet.data.accounts.map((a:any)=>a.balanceMinor)).toEqual([100000,201000]);
     await call(env,'DELETE','/api/entries/wallet-tx-boundary',{cookie:o});
     wallet=await read();expect(wallet.data.accounts.map((a:any)=>a.balanceMinor)).toEqual([100000,202000]);
@@ -156,6 +210,7 @@ describe('записи', () => {
   it('правка с версией, конфликт 409, мягкое удаление и повтор удаления', async () => {
     const { env, o } = await setup();
     const c = (await call(env, 'POST', '/api/entries', { cookie: o, body: { direction: 'out', amountMinor: 1000, counterparty: 'A' } })).data.entry;
+    for(const version of [undefined,null,0,'1',1.5]){const missing=await call(env,'PATCH',`/api/entries/${c.id}`,{cookie:o,body:{version,amountMinor:999}});expect(missing.status).toBe(400);expect(missing.data.error).toBe('version_required');}
     const u = await call(env, 'PATCH', `/api/entries/${c.id}`, { cookie: o, body: { version: 1, amountMinor: 2000 } });
     expect(u.data.entry.payload.amountMinor).toBe(2000); expect(u.data.entry.version).toBe(2);
     expect((await call(env, 'PATCH', `/api/entries/${c.id}`, { cookie: o, body: { version: 1, amountMinor: 3000 } })).status).toBe(409);
@@ -176,7 +231,7 @@ describe('записи', () => {
   it('пакетная отправка очереди: часть ошибок не ломает остальное', async () => {
     const { env, o } = await setup();
     const r = await call(env, 'POST', '/api/entries/batch', { cookie: o, body: { items: [
-      { id: 'batch-id-0001', direction: 'out', amountMinor: 100 }, { id: 'batch-id-0002', direction: 'zzz', amountMinor: 100 }, { id: 'batch-id-0001', direction: 'out', amountMinor: 100 }] } });
+      { login:'owner',id: 'batch-id-0001', direction: 'out', amountMinor: 100 }, { login:'owner',id: 'batch-id-0002', direction: 'zzz', amountMinor: 100 }, { login:'owner',id: 'batch-id-0001', direction: 'out', amountMinor: 100 }] } });
     expect(r.data.results.map((x: any) => x.ok)).toEqual([true, false, true]);
     expect(r.data.results[2].duplicate).toBe(true);
   });
@@ -228,7 +283,8 @@ describe('категории и контрагенты', () => {
       } });
       expect(result.status).toBe(201);
     }
-    const save = (id: string, categoryId: string) => call(env, 'PATCH', `/api/entries/${id}`, { cookie: o, body: { categoryId } });
+    const versions=new Map(ids.map(id=>[id,1]));
+    const save = async(id: string, categoryId: string) => {const r=await call(env, 'PATCH', `/api/entries/${id}`, { cookie: o, body: { categoryId,version:versions.get(id) } });if(r.status===200)versions.set(id,r.data.entry.version);return r;};
     const summary = async () => (await call(env, 'GET', '/api/reports/summary?month=2026-11', { cookie: o })).data;
 
     const saved = await save(ids[0], health);

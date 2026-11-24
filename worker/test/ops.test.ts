@@ -6,14 +6,14 @@ it('переводы: запись, повтор, список и отмена �
   const {env,store}=makeEnv();await addAccount(store,'transfer-ops');const cookie=(await loginAs(env,'transfer-ops')).cookie;
   await call(env,'PUT','/api/financial-profile',{cookie,body:{version:0,status:'deferred',profile:{balanceDate:'2026-11-01',accounts:['a','b'].map(id=>({id,bank:'Kaspi',name:id,kind:'card',openingBalanceMinor:0})),expenseCategoryIds:[],monthlyBudgetMinor:null,incomes:[],obligations:[],householdSize:1,goal:'',goalTargetMinor:null,monthlySavingMinor:null}}});
   const body={id:'ops-transfer-01',accountLogin:'transfer-ops',fromId:'a',toId:'b',amountMinor:100,occurredAt:Date.parse('2026-11-03')};
-  for(const [method,path,budget] of [['POST','/api/transfers',4],['POST','/api/transfers',2],['GET','/api/transfers',2],['DELETE','/api/transfers/ops-transfer-01',2]] as const){const r=await call(env,method,path,{cookie,body:method==='POST'?body:undefined});expect(r.status).toBeLessThan(300);expect(Number(r.headers.get('X-Storage-Ops'))).toBeLessThanOrEqual(budget);}
+  for(const [method,path,budget] of [['POST','/api/transfers',4],['POST','/api/transfers',2],['GET','/api/transfers',2],['DELETE','/api/transfers/ops-transfer-01',3]] as const){const r=await call(env,method,path,{cookie,body:method==='POST'?body:method==='DELETE'?{version:1}:undefined});expect(r.status).toBeLessThan(300);expect(Number(r.headers.get('X-Storage-Ops'))).toBeLessThanOrEqual(budget);}
 });
 
 it('бюджет обращений к хранилищу на запрос не превышен', async () => {
   const rows = await measureSession();
   const budget: Record<string, number> = {
     'GET /api/wallet': 3,
-    'POST /api/auth/login': 4, 'GET /api/accounts (свой аккаунт)': 2, 'GET /api/me': 2, 'GET /api/categories': 2, 'GET /api/financial-profile': 2, 'PUT /api/financial-profile': 3,
+    'POST /api/auth/login': 6, 'GET /api/accounts (свой аккаунт)': 2, 'GET /api/me': 2, 'GET /api/categories': 2, 'GET /api/financial-profile': 2, 'PUT /api/financial-profile': 3,
     'GET /api/entries (лента, 100)': 3, 'POST /api/entries (добавить)': 5, 'POST /api/entries (повтор, дубль)': 5,
     'GET /api/reports/summary': 3, 'POST /api/import (1000 строк)': 7, 'POST /api/import (1000 строк, dryRun)': 18, 'POST /api/import (500 строк)': 7, 'POST /api/import (500 строк, dryRun)': 12, 'POST /api/import (200 строк)': 7, 'POST /api/shortcuts/add': 8,
   };

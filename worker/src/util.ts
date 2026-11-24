@@ -69,9 +69,11 @@ export function parseJsonObject(t:string):Record<string,any>{
   if(!value||typeof value!=='object'||Array.isArray(value))throw new HttpError(400,'bad_json','Нужен JSON-объект');
   return value;
 }
+const parsedBodies=new WeakMap<Request,{bytes:number;value:Record<string,any>}>();
 export async function readJson<T = any>(req: Request, maxBytes = 64 * 1024): Promise<T> {
+  const cached=parsedBodies.get(req);if(cached){if(cached.bytes>maxBytes)throw new HttpError(413,'too_large','Слишком большое тело запроса');return cached.value as T;}
   const t = await readBody(req, maxBytes);
-  return parseJsonObject(t) as T;
+  const value=parseJsonObject(t);parsedBodies.set(req,{bytes:new TextEncoder().encode(t).length,value});return value as T;
 }
 
 export function cookie(name: string, value: string, maxAgeSec: number): string {

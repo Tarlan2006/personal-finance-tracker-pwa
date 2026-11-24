@@ -1,15 +1,21 @@
 export class ApiError extends Error {
-  constructor(public status: number, public code: string, message: string, public retryAfter = 0) { super(message); }
+  constructor(public status: number, public code: string, message: string, public retryAfter = 0,public details?:Record<string,any>) { super(message); }
   get network() { return this.status === 0; }
   get retryable() { return this.status === 0 || this.status === 429 || this.status >= 500; }
 }
 let pausedUntil = 0;
 let onUnauthorized: () => void = () => {};
+let accountLoginProvider:()=>string|null=()=>null;
+export const setAccountLoginProvider=(provider:()=>string|null)=>{accountLoginProvider=provider;};
 export const setUnauthorizedHandler = (f: () => void) => { onUnauthorized = f; };
 const inflight = new Map<string, Promise<any>>();
 let sessionGeneration=0;
 
 async function doFetch<T>(method: string, path: string, body?: unknown): Promise<T> {
+  if(['POST','PUT','PATCH','DELETE'].includes(method)&&path!=='/api/auth/login'){
+    const login=accountLoginProvider();
+    if(login&&(body===undefined||body!==null&&typeof body==='object'&&!Array.isArray(body)))body={...(body??{}),accountLogin:(body as any)?.accountLogin??login};
+  }
   if(method==='POST'&&(path==='/api/auth/login'||path==='/api/auth/logout')){sessionGeneration++;inflight.clear();if(path==='/api/auth/login')pausedUntil=0;}
   const generation=sessionGeneration;
   if (Date.now() < pausedUntil && !['/api/auth/login','/api/auth/logout'].includes(path)) {
@@ -34,7 +40,7 @@ async function doFetch<T>(method: string, path: string, body?: unknown): Promise
     : res.status === 429 ? 'Слишком много запросов. Подождите немного и повторите.'
     : res.status === 401 ? 'Войдите в аккаунт снова.'
     : 'Не удалось выполнить действие. Обновите экран и попробуйте снова.';
-  throw new ApiError(res.status, typeof data.error === 'string' ? data.error : 'error', message, retry);
+  throw new ApiError(res.status, typeof data.error === 'string' ? data.error : 'error', message, retry,data.details);
 }
 /** GET-запросы с одинаковым путём, идущие одновременно, объединяются в один сетевой вызов. */
 export function api<T = any>(method: string, path: string, body?: unknown): Promise<T> {

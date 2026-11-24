@@ -27,5 +27,5 @@ export class Store {
 }
 
 export class HttpError extends Error {
-  constructor(public status: number, public code: string, message: string, public headers: Record<string, string> = {}) { super(message); }
+  constructor(public status: number, public code: string, message: string, public headers: Record<string, string> = {},public details?:Record<string,unknown>) { super(message); }
 }

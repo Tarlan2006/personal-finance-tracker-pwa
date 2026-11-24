@@ -61,10 +61,10 @@ export const searchText = (p: TxPayload) => normName(`${p.counterparty} ${p.note
 export function insertStatements(store: Store, accountId: string, id: string, p: TxPayload, occurredAt: number, source: string, extra: { importId?: string; dedupeKey?: string } = {}) {
   const t = now();
   const stmts = [store.stmt(
-    `INSERT INTO entries (id, account_id, kind, occurred_at, created_at, updated_at, version, value, payload_json, source, import_id, dedupe_key, search)
-     VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
+    `INSERT INTO entries (id, account_id, kind, occurred_at, created_at, updated_at, version, value, payload_json, source, import_id, dedupe_key, search, financial_account_id)
+     VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
     id, accountId, KIND_TX, occurredAt, t, t, p.direction === 'in' ? p.amountMinor : -p.amountMinor, JSON.stringify(p), source,
-    extra.importId ?? null, extra.dedupeKey ?? null, searchText(p))];
+    extra.importId ?? null, extra.dedupeKey ?? null, searchText(p),p.financialAccountId||null)];
   const norm = normName(p.counterparty);
   if (norm) stmts.push(store.stmt(
     'INSERT INTO counterparties (id, account_id, name_norm, display, created_at) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING',
@@ -108,7 +108,8 @@ export function toDTO(row: any, meta: Meta): EntryDTO {
 export async function updateTx(store: Store, accountId: string, id: string, body: any) {
   const row = await store.first<any>('SELECT * FROM entries WHERE account_id = ? AND id = ? AND deleted_at IS NULL', accountId, id);
   if (!row||row.kind!==KIND_TX) throw new HttpError(404, 'not_found', 'Запись не найдена');
-  if (body.version !== undefined && Number(body.version) !== row.version)
+  if(!Number.isSafeInteger(body?.version)||body.version<1)throw new HttpError(400,'version_required','Укажите версию операции');
+  if (body.version !== row.version)
     throw new HttpError(409, 'version_conflict', 'Запись уже изменена на другом устройстве');
   const old = JSON.parse(row.payload_json) as TxPayload;
   const merged = normalizeTx({
@@ -121,10 +122,10 @@ export async function updateTx(store: Store, accountId: string, id: string, body
   if (merged.payload.financialAccountId && merged.payload.financialAccountId !== old.financialAccountId) await assertFinancialAccount(store, accountId, merged.payload.financialAccountId);
   const t = now();
   const stmts = [store.stmt(
-    `UPDATE entries SET occurred_at=?, updated_at=?, version=version+1, value=?, payload_json=?, search=?
+    `UPDATE entries SET occurred_at=?, updated_at=?, version=version+1, value=?, payload_json=?, search=?, financial_account_id=?
      WHERE account_id=? AND id=? AND version=? AND deleted_at IS NULL`,
     merged.occurredAt, t, merged.payload.direction === 'in' ? merged.payload.amountMinor : -merged.payload.amountMinor,
-    JSON.stringify(merged.payload), searchText(merged.payload), accountId, id, row.version)];
+    JSON.stringify(merged.payload), searchText(merged.payload),merged.payload.financialAccountId||null, accountId, id, row.version)];
   const norm = normName(merged.payload.counterparty);
   if (norm) stmts.push(store.stmt('INSERT INTO counterparties (id, account_id, name_norm, display, created_at) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING', uuid(), accountId, norm, merged.payload.counterparty, t));
   const res = await store.batch(stmts);
@@ -154,9 +155,14 @@ export async function listTx(store: Store, accountId: string, q: URLSearchParams
   if(q.has('beforeTime')!==q.has('beforeId'))throw new HttpError(400,'bad_query','Курсор содержит время и id');
   const limit = Math.min(Math.max(Number(q.get('limit') ?? 100) || 100, 1), 200);
   const where = ['account_id = ?', 'deleted_at IS NULL', 'kind = ?']; const args: unknown[] = [accountId, KIND_TX];
-  const from = q.get('from'), to = q.get('to'), search = normName(q.get('q') ?? '');
+  let from = q.get('from'), to = q.get('to');const search = normName(q.get('q') ?? '');
+  if(search){
+    const end=to===null?now()+1:Number(to),start=from===null?end-366*864e5:Number(from);
+    if(start>=end||end-start>366*864e5)throw new HttpError(400,'search_range','Для поиска выберите период не больше 366 дней');
+    from=String(start);to=String(end);
+  }
   if (q.has('financialAccountId')) {
-    where.push("COALESCE(json_extract(payload_json, '$.financialAccountId'), '') = ?"); args.push(q.get('financialAccountId'));
+    const id=q.get('financialAccountId');where.push(id?'financial_account_id = ?':'financial_account_id IS NULL');if(id)args.push(id);
   }
   if (from) { where.push('occurred_at >= ?'); args.push(Number(from)); }
   if (to) { where.push('occurred_at < ?'); args.push(Number(to)); }

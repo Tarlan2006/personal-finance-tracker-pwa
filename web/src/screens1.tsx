@@ -4,7 +4,7 @@ import { shiftDocumentScroll } from './scroll-lock';
 import { EntryCard } from './entry-card';
 import { Wallet, AccountSelect } from './wallet';
 import { api, ApiError } from './api';
-import { enqueue, flush, listQueue, removeFromQueue, startQueue, sealQueue, unsealQueue, subscribeQueue, getQueueStatus, type QItem } from './queue';
+import { enqueue, flush, listQueue, removeFromQueue, startQueue, sealQueue, unsealQueue, reencryptQueue, subscribeQueue, getQueueStatus, type QItem } from './queue';
 import { Field, Sheet, bump, dayLabel, fmt, getState, loadCats, setState, todayStr, useAppState, catMap, Icons, inputMinor, normName, thisMonth, monthLabel, type Cat, useAction } from './ui';
 
 // ---------- Вход ----------
@@ -27,8 +27,7 @@ export function Login() {
       const canonicalLogin=login.trim().toLowerCase();
       const r = await api('POST', '/api/auth/login', { login:canonicalLogin, password: pw, device: deviceLabel() });
       // A storage permission failure must not block online access or erase the queue.
-      await unsealQueue(canonicalLogin, r.queueKey).catch(()=>{});
-      await afterLogin();
+      await afterLogin({...r,login:canonicalLogin});
     } catch (x) { setErr((x as ApiError).message + ((x as ApiError).retryAfter ? ` (через ${Math.ceil((x as ApiError).retryAfter / 60)} мин)` : '')); } finally { submitting.current=false;setBusy(false); }
   }
   return <div className="app" style={{ paddingBottom: 24 }}>
@@ -47,19 +46,22 @@ export function Login() {
   </div>;
 }
 const deviceLabel = () => /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android' : 'Браузер';
-export async function afterLogin() {
+export async function afterLogin(keys?:{login:string;queueKey:string;queueRecoveryKeys?:string[]}) {
   const me = await api('GET', '/api/me');
+  const queueKey=keys&&keys.login===me.login?keys.queueKey:getState().login===me.login?getState().queueKey:'';
+  if(keys&&keys.login===me.login){await reencryptQueue(me.login,keys.queueKey,keys.queueRecoveryKeys).then(()=>unsealQueue(me.login,keys.queueKey)).catch(()=>{});}
   const [financialProfile,categories]=await Promise.all([api('GET','/api/financial-profile'),api('GET','/api/categories')]);
-  setState({ login: me.login, name: me.name, queueKey: me.queueKey, financialProfile, cats:categories.categories, onboardingRequired:['new','draft'].includes(financialProfile.status), ready: true });
+  setState({ login: me.login, name: me.name, queueKey, financialProfile, cats:categories.categories, onboardingRequired:['new','draft'].includes(financialProfile.status), ready: true });
   startQueue(me.login);
 }
 /** Выход возможен только онлайн: cookie HttpOnly, очистить её может лишь сервер. Иначе сессия осталась бы жива. */
 export async function doLogout(): Promise<string | null> {
   const { login, queueKey } = getState();
+  if(!navigator.onLine)return 'Нет связи: выйти можно только при подключении к сети';
+  if(login){try{await sealQueue(login,queueKey);}catch(e){startQueue(login);return (e as Error).message;}}
   try { await api('POST', '/api/auth/logout', {}); } catch (e) {
-    if ((e as ApiError).status === 0) return 'Нет связи: выйти можно только при подключении к сети';
+    if(login&&queueKey){await unsealQueue(login,queueKey);startQueue(login);}return 'Не удалось выйти. Проверьте подключение и повторите';
   }
-  if (login) { try { await sealQueue(login, queueKey); } catch {} }
   setState({ login: null, name: '', queueKey: '', cats: [], financialProfile:null, onboardingRequired:false });
   return null;
 }
@@ -76,6 +78,7 @@ export function Feed({ onImport }: {onImport:()=>void}) {
   const queueStatus=useSyncExternalStore(subscribeQueue,getQueueStatus);
   const { cats, login, version, selectedAccount, financialProfile } = useAppState(); const cm = useMemo(() => catMap(cats), [cats]);
   const [items, setItems] = useState<Entry[]>([]); const [next, setNext] = useState<any>(null); const [q, setQ] = useState('');
+  const [searchFrom,setSearchFrom]=useState(new Date(Date.now()+5*3600e3-365*864e5).toISOString().slice(0,10)),[searchTo,setSearchTo]=useState(todayStr());
   const [filter,setFilter]=useState<FeedFilter>('all');
   const [summary,setSummary]=useState<{in:number;out:number;net:number}|null>(null);
   useEffect(()=>{let active=true;setSummary(null);api('GET','/api/reports/summary?month='+thisMonth()+(selectedAccount?'&financialAccountId='+encodeURIComponent(selectedAccount):'')).then(r=>{if(active)setSummary(r.totals);}).catch(()=>{});return ()=>{active=false;};},[version,queueStatus.count,selectedAccount]);
@@ -113,19 +116,19 @@ export function Feed({ onImport }: {onImport:()=>void}) {
     setSelecting(true);setSelected(prev=>{const n=new Set(prev);if(n.has(id))n.delete(id);else if(n.size<1000)n.add(id);return n;});
   }
   function cancelSelection(){if(deletingRef.current)return;setSelecting(false);setSelected(new Set());setConfirmDelete(false);setDeleteErr('');}
-  useEffect(()=>{cancelSelection();},[q,filter,selectedAccount]);
+  useEffect(()=>{cancelSelection();},[q,filter,selectedAccount,searchFrom,searchTo]);
   useEffect(()=>{const key=(e:KeyboardEvent)=>{if(e.key==='Escape'&&!confirmDelete)cancelSelection();};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[confirmDelete]);
   const load = useCallback(async (append = false) => {
     if(deletingRef.current)return;
     const current=++generation.current;setLoading(true);
-    const key=JSON.stringify([q,filter,selectedAccount]);const same=shownQuery.current===key;
+    const key=JSON.stringify([q,filter,selectedAccount,searchFrom,searchTo]);const same=shownQuery.current===key;
     if(!same){depth.current=50;setItems([]);}
     try {
       let cursor=append?next:null;
       let visible:Entry[]=[], following:any=null;
       const target=append?1:same?depth.current:1;
       do {
-        const p=new URLSearchParams({limit:'50'});if(q)p.set('q',q);
+        const p=new URLSearchParams({limit:'50'});if(q){p.set('q',q);p.set('from',String(Date.parse(searchFrom+'T00:00:00+05:00')));p.set('to',String(Date.parse(searchTo+'T00:00:00+05:00')+864e5));}
         if(selectedAccount)p.set('financialAccountId',selectedAccount);
         if(cursor){p.set('beforeTime',cursor.beforeTime);p.set('beforeId',cursor.beforeId);}
         const r=await api('GET','/api/entries?'+p);
@@ -139,7 +142,7 @@ export function Feed({ onImport }: {onImport:()=>void}) {
       setItems(result);setNext(following);setRefreshHeight(undefined);setErr('');
     }catch(e){if(current===generation.current){remember(itemsRef.current);setRefreshHeight(undefined);setErr((e as Error).message);}}
     finally{if(current===generation.current)setLoading(false);}
-  },[q,next,filter,selectedAccount]);
+  },[q,next,filter,selectedAccount,searchFrom,searchTo]);
   async function removeSelected(){
     if(deletingRef.current||!selected.size)return;
     deletingRef.current=true;setDeleting(true);setDeleteErr('');generation.current++;
@@ -155,7 +158,7 @@ export function Feed({ onImport }: {onImport:()=>void}) {
     }catch(e){if(getState().login===accountLogin)setDeleteErr((e as Error).message+' Если ответ потерян, повторное удаление безопасно.');}
     finally{deletingRef.current=false;setDeleting(false);setLoading(false);}
   }
-  useEffect(()=>{const t=setTimeout(()=>load(false),q?250:0);return ()=>{clearTimeout(t);generation.current++;};},[q,version,filter,queueStatus.count,selectedAccount]);
+  useEffect(()=>{const t=setTimeout(()=>load(false),q?250:0);return ()=>{clearTimeout(t);generation.current++;};},[q,version,filter,queueStatus.count,selectedAccount,searchFrom,searchTo]);
   useEffect(() => { let active=true;if (login) listQueue(login).then(r=>{if(active)setPending(r);}).catch(()=>{if(active)setPending(previous=>previous.filter(item=>item.login===login));});return ()=>{active=false;}; }, [login, version, items, queueStatus.count, queueStatus.failed, queueStatus.lastResult, queueStatus.storageError]);
   const groups = useMemo(() => { const g = new Map<string, Entry[]>(); for (const e of items) { if (!matchesFilter(e, filter) || selectedAccount && e.payload.financialAccountId !== selectedAccount) continue; const k = dayLabel(e.occurredAt); (g.get(k) ?? g.set(k, []).get(k)!).push(e); } return [...g]; }, [items,filter,selectedAccount]);
   const visiblePending=pending.filter(p=>!selectedAccount||p.payload.financialAccountId===selectedAccount);
@@ -177,6 +180,7 @@ export function Feed({ onImport }: {onImport:()=>void}) {
       {queueStatus.storageError==='read'&&login&&<button type="button" className="text-action" onClick={()=>void flush(login)}>Проверить хранилище снова</button>}
     </div>}
     <div className="spotlight">{Icons.search}<input disabled={deleting} aria-label="Поиск" type="search" placeholder="Поиск по получателю и заметке" value={q} onChange={e => setQ(e.target.value)}  /></div>
+    {q&&<div><p className="sub">Поиск в выбранном периоде, не больше 366 дней.</p><Field label="Поиск с"><input aria-label="Поиск с" type="date" value={searchFrom} onChange={e=>setSearchFrom(e.target.value)}/></Field><Field label="Поиск по"><input aria-label="Поиск по" type="date" value={searchTo} onChange={e=>setSearchTo(e.target.value)}/></Field></div>}
     <div className="filter-pills" aria-label="Фильтры операций">{([['all','Все'],['out','Расходы'],['in','Доходы'],['auto','Авто-правила']] as const).map(([key,label])=><button disabled={deleting} key={key} aria-pressed={filter===key} className={filter===key?'active':''} onClick={()=>setFilter(key)}>{label}</button>)}</div>
     <section className="balance-card" aria-label="Сводка за месяц"><div className="balance-label">Баланс · {monthLabel(thisMonth()).replace(/ г\.$/,'')}</div><div className="balance-value" style={{color:summary?.net?summary.net>0?'var(--green)':'var(--red)':undefined}}>{summary ? fmt(summary.net) : '— ₸'}</div><div className="balance-split"><div><span><i className="flow-dot in"/>Доходы</span><strong>{summary?fmt(summary.in):'—'}</strong></div><div><span><i className="flow-dot out"/>Расходы</span><strong>{summary?fmt(summary.out):'—'}</strong></div></div>{visiblePending.length>0&&<small className="muted">Без ожидающих отправки</small>}</section>
     {err && <div className="banner" role="alert">{err}</div>}

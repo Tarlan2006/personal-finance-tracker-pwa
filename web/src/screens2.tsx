@@ -5,7 +5,7 @@ import {shiftDocumentScroll} from './scroll-lock';
 import { api, ApiError, pauseRemainingSec } from './api';
 import { getQueueStatus, subscribeQueue, listQueue, retryFailed, flush } from './queue';
 import { applyTheme, bump, Field, fmt, getState, setState, loadCats, monthLabel, savedTheme, shiftMonth, Sheet, thisMonth, useAppState, useAction, type Cat } from './ui';
-import { doLogout } from './screens1';
+import { doLogout,afterLogin } from './screens1';
 import { FinancialProfileScreen } from './onboarding';
 import { AccountSelect } from './wallet';
 
@@ -129,6 +129,7 @@ type Sub = null | 'cats' | 'keys' | 'devices' | 'import' | 'sync' | 'password' |
 export function More({ onImported, onViewFeed }: { onImported?: (n:number)=>void; onViewFeed?:()=>void } = {}) {
   const logout=useAction();
   const { name, login } = useAppState(); const [sub, setSub] = useState<Sub>(null); const [lerr, setLerr] = useState('');
+  const [reauth,setReauth]=useState(false),[password,setPassword]=useState('');
   if (sub) return <><button className="back" onClick={() => setSub(null)}>‹ Ещё</button>{{ history:<><h1>История и очистка</h1><HistoryPanel/></>, profile:<FinancialProfileScreen/>, cats: <Categories />, keys: <Keys />, devices: <Devices />, import: <Import onImported={onImported} onViewFeed={onViewFeed} />, sync: <Sync />, password: <Password />, theme: <Theme /> }[sub]}</>;
   const item = (s: Sub, label: string, hint?: string) => <button className="row" onClick={() => setSub(s)}><span className="grow">{label}</span><span className="sub">{hint}</span><span className="sub">›</span></button>;
   return <>
@@ -140,7 +141,8 @@ export function More({ onImported, onViewFeed }: { onImported?: (n:number)=>void
     <h2>Интеграции</h2><div className="group">{item('keys', 'Быстрые команды (ключи)')}</div>
     <h2>Приложение</h2><div className="group">{item('sync', 'Синхронизация')}{item('theme', 'Тема')}</div>
     <h2>Настройки</h2><div className="group">{item('devices', 'Устройства')}{item('password', 'Сменить пароль')}</div>
-    <div style={{ marginTop: 24 }}>{lerr && <div className="err" role="alert">{lerr}</div>}<button className="btn danger" disabled={logout.busy} onClick={()=>logout.run(async()=>setLerr((await doLogout())??''))}>Выйти</button></div>
+    <div style={{ marginTop: 24 }}>{lerr && <div className="err" role="alert">{lerr}</div>}<button className="btn danger" disabled={logout.busy} onClick={()=>logout.run(async()=>{const err=await doLogout();setLerr(err??'');if(err?.includes('Подтвердите пароль'))setReauth(true);})}>Выйти</button></div>
+    {reauth&&<Sheet title="Защитить очередь" busy={logout.busy} onClose={()=>setReauth(false)}><p>Введите пароль, чтобы зашифровать неотправленные операции перед выходом.</p><Field label="Пароль"><input type="password" aria-label="Пароль для выхода" value={password} onChange={e=>setPassword(e.target.value)}/></Field>{logout.error&&<p className="err" role="alert">{logout.error}</p>}<button className="btn" disabled={logout.busy||!password} onClick={()=>logout.run(async()=>{const keys=await api('POST','/api/auth/login',{login,password,device:'Подтверждение выхода'});await afterLogin({...keys,login});setPassword('');setReauth(false);setLerr((await doLogout())??'');})}>Подтвердить и выйти</button></Sheet>}
   </>;
 }
 
@@ -229,7 +231,7 @@ function Password() {
     <Field label="Текущий пароль"><input disabled={action.busy} aria-label="Текущий пароль" type="password" autoComplete="current-password" value={cur} onChange={e => setCur(e.target.value)} /></Field>
     <Field label="Новый пароль (от 10 символов)"><input disabled={action.busy} aria-label="Новый пароль" type="password" autoComplete="new-password" value={nw} onChange={e => setNw(e.target.value)} /></Field>
     {action.error&&<div className="err" role="alert">{action.error}</div>}{msg && <div className="ok" role="status">{msg}</div>}
-    <button className="btn" disabled={action.busy||!cur||nw.length<10} onClick={()=>action.run(async()=>{setMsg('');await api('POST','/api/auth/password',{current:cur,next:nw});setMsg('Пароль изменён, другие устройства вышли');setCur('');setNw('');})}>Сменить пароль</button></>;
+    <button className="btn" disabled={action.busy||!cur||nw.length<10} onClick={()=>action.run(async()=>{setMsg('');const login=getState().login;await api('POST','/api/auth/password',{current:cur,next:nw});setMsg('Пароль изменён. Подтверждаем новый ключ очереди…');const keys=await api('POST','/api/auth/login',{login,password:nw,device:'После смены пароля'});await afterLogin({...keys,login});setMsg('Пароль изменён, другие устройства вышли');setCur('');setNw('');})}>Сменить пароль</button></>;
 }
 
 function Sync() {

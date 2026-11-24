@@ -48,6 +48,40 @@ export async function saveProfile(store:Store,accountId:string,body:any):Promise
   const profile:FinancialProfile={balanceDate,accounts,expenseCategoryIds,incomes,obligations,householdSize:p.householdSize,monthlyBudgetMinor:money(p.monthlyBudgetMinor,'Бюджет расходов'),goal:text(p.goal,'Цель',200),goalTargetMinor:money(p.goalTargetMinor,'Сумма цели'),monthlySavingMinor:money(p.monthlySavingMinor,'Накопления в месяц')};
   const payload=JSON.stringify(profile),updatedAt=Date.now();
   if(new TextEncoder().encode(payload).length>24000)fail('Анкета слишком большая');
+  const previous=body.version?await readProfile(store,accountId):null;
+  const removed=previous?.profile?.accounts.filter(old=>!accounts.some(a=>a.id===old.id))??[];
+  if(removed.length){
+    const choices=array(body.accountResolutions??[],30,'решения по удалённым счетам'),mapping:Record<string,string|null>={};
+    for(const c of choices){obj(c);if(!removed.some(a=>a.id===c.id)||c.targetId!==null&&!accounts.some(a=>a.id===c.targetId))fail('Выберите существующий счёт для переноса');if(Object.hasOwn(mapping,c.id))fail('Решение по счёту повторяется');mapping[c.id]=c.targetId;}
+    const removedIds=JSON.stringify(removed.map(a=>a.id)),resolvedIds=JSON.stringify(Object.keys(mapping)),mapJson=JSON.stringify(mapping);
+    const dependencies=async()=>{
+      const rows=await store.all<{id:string;operations:number;transfers:number}>(`WITH refs AS (
+        SELECT id AS entry_id,kind,financial_account_id AS id FROM entries WHERE account_id=? AND kind IN ('tx','transfer')
+        UNION SELECT id,kind,transfer_to_account_id FROM entries WHERE account_id=? AND kind='transfer'
+      ) SELECT id,SUM(kind='tx') AS operations,SUM(kind='transfer') AS transfers FROM refs WHERE id IN (SELECT value FROM json_each(?)) GROUP BY id`,accountId,accountId,removedIds);
+      return rows.filter(r=>!Object.hasOwn(mapping,r.id)).map(r=>({...r,name:removed.find(a=>a.id===r.id)!.name}));
+    };
+    const reject=(rows:Awaited<ReturnType<typeof dependencies>>)=>{throw new HttpError(409,'account_in_use','У удаляемых счетов есть операции. Выберите, что с ними сделать',{}, {removedAccounts:rows});};
+    const used=await dependencies();if(used.length)reject(used);
+    // SQL guard catches a concurrent insertion after the dependency check. changes() binds
+    // relocation to this successful profile CAS, rather than another tab's saved version.
+    const [saved]=await store.batch([
+      store.stmt(`UPDATE financial_profiles SET status=?,version=version+1,payload_json=?,updated_at=? WHERE account_id=? AND version=? AND NOT EXISTS (
+        SELECT 1 FROM entries WHERE account_id=? AND kind IN ('tx','transfer') AND (
+          (financial_account_id IN (SELECT value FROM json_each(?)) AND financial_account_id NOT IN (SELECT value FROM json_each(?))) OR
+          (transfer_to_account_id IN (SELECT value FROM json_each(?)) AND transfer_to_account_id NOT IN (SELECT value FROM json_each(?)))
+        ))`,body.status,payload,updatedAt,accountId,body.version,accountId,removedIds,resolvedIds,removedIds,resolvedIds),
+      store.stmt(`UPDATE entries SET
+        payload_json=CASE WHEN kind='tx' THEN json_set(payload_json,'$.financialAccountId',CASE WHEN financial_account_id IN (SELECT value FROM json_each(?)) THEN (SELECT value FROM json_each(?) WHERE key=financial_account_id) ELSE financial_account_id END)
+          ELSE json_set(payload_json,'$.fromId',CASE WHEN financial_account_id IN (SELECT value FROM json_each(?)) THEN (SELECT value FROM json_each(?) WHERE key=financial_account_id) ELSE financial_account_id END,
+            '$.toId',CASE WHEN transfer_to_account_id IN (SELECT value FROM json_each(?)) THEN (SELECT value FROM json_each(?) WHERE key=transfer_to_account_id) ELSE transfer_to_account_id END) END,
+        financial_account_id=CASE WHEN financial_account_id IN (SELECT value FROM json_each(?)) THEN (SELECT value FROM json_each(?) WHERE key=financial_account_id) ELSE financial_account_id END,
+        transfer_to_account_id=CASE WHEN transfer_to_account_id IN (SELECT value FROM json_each(?)) THEN (SELECT value FROM json_each(?) WHERE key=transfer_to_account_id) ELSE transfer_to_account_id END,
+        version=version+1,updated_at=? WHERE account_id=? AND kind IN ('tx','transfer') AND changes()=1 AND (financial_account_id IN (SELECT value FROM json_each(?)) OR transfer_to_account_id IN (SELECT value FROM json_each(?)))`,resolvedIds,mapJson,resolvedIds,mapJson,resolvedIds,mapJson,resolvedIds,mapJson,resolvedIds,mapJson,updatedAt,accountId,resolvedIds,resolvedIds),
+    ]);
+    if(!saved.meta?.changes){const raced=await dependencies();if(raced.length)reject(raced);throw new HttpError(409,'profile_conflict','Анкета изменена в другом окне. Обновите страницу');}
+    return {status:body.status,version:body.version+1,profile,updatedAt};
+  }
   // Compare-and-swap in SQL: stale tabs cannot silently overwrite client finances.
   const result=body.version===0
     ?await store.run('INSERT INTO financial_profiles (account_id,status,version,payload_json,updated_at) VALUES (?,?,1,?,?) ON CONFLICT(account_id) DO NOTHING',accountId,body.status,payload,updatedAt)

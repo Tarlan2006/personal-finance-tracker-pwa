@@ -59,7 +59,7 @@ export async function login(store: Store, loginName: string, password: string, d
   await store.run(
     `INSERT INTO sessions (id, account_id, token_hash, device_label, created_at, last_seen_at, expires_at) VALUES (?,?,?,?,?,?,?)`,
     sid, acc.id, await sha256(token), String(device || 'Устройство').slice(0, 60), t, t, t + SESSION_TTL_MS);
-  return { token, accountId: acc.id as string, sessionId: sid, queueKey: acc.queue_key as string };
+  return { token, accountId: acc.id as string, sessionId: sid, queueKey: acc.queue_key as string,queueRecoveryKeys:JSON.parse(acc.queue_key_history) as string[] };
 }
 
 /** Сессия по cookie. Обновляет last_seen не чаще раза в час (экономия записей). */
@@ -120,8 +120,10 @@ export async function changePassword(store: Store, accountId: string, current: s
     throw new HttpError(403, 'bad_credentials', 'Текущий пароль неверен');
   const salt = b64(crypto.getRandomValues(new Uint8Array(16)));
   const t = now();
-  await store.batch([
-    store.stmt('UPDATE accounts SET pass_hash=?, pass_salt=?, pass_iter=?, updated_at=? WHERE id=?', await hashPassword(next, salt), salt, PBKDF2_ITER, t, accountId),
-    store.stmt('UPDATE sessions SET revoked_at = ? WHERE account_id = ? AND revoked_at IS NULL AND id != ?', t, accountId, keepSessionId ?? ''),
+  const nextHash=await hashPassword(next,salt),nextQueueKey=randomToken(32),history=JSON.stringify([...new Set([acc.queue_key,...JSON.parse(acc.queue_key_history)])]);
+  const [changed]=await store.batch([
+    store.stmt('UPDATE accounts SET pass_hash=?, pass_salt=?, pass_iter=?, updated_at=?,queue_key=?,queue_key_history=? WHERE id=? AND pass_hash=? AND queue_key=?',nextHash,salt,PBKDF2_ITER,t,nextQueueKey,history,accountId,acc.pass_hash,acc.queue_key),
+    store.stmt('UPDATE sessions SET revoked_at = ? WHERE account_id = ? AND revoked_at IS NULL AND id != ? AND EXISTS (SELECT 1 FROM accounts WHERE id=? AND pass_hash=?)', t, accountId, keepSessionId ?? '',accountId,nextHash),
   ]);
+  if(!changed.meta?.changes)throw new HttpError(409,'password_changed','Пароль уже изменён. Войдите снова');
 }

@@ -10,12 +10,14 @@ async function setup(page:Page){
     const request=async(method:string,path:string,body?:unknown)=>{const r=await fetch(path,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});if(!r.ok)throw new Error('Synthetic setup failed '+path);return r.json();};
     const current=await request('GET','/api/financial-profile');
     const accounts=[{id:'ui-kaspi-card',bank:'Kaspi',name:'Gold',kind:'card',openingBalanceMinor:100000},{id:'ui-freedom-card',bank:'Freedom',name:'Daily',kind:'card',openingBalanceMinor:200000},{id:'ui-freedom-deposit',bank:'Freedom',name:'Накопления',kind:'deposit',openingBalanceMinor:300000}];
-    await request('PUT','/api/financial-profile',{version:current.version,status:'deferred',profile:{balanceDate:'2026-11-01',accounts,expenseCategoryIds:[],monthlyBudgetMinor:null,incomes:[],obligations:[],householdSize:1,goal:'',goalTargetMinor:null,monthlySavingMinor:null}});
+    const accountResolutions=(current.profile?.accounts??[]).filter((a:any)=>!accounts.some(b=>b.id===a.id)).map((a:any)=>({id:a.id,targetId:null}));
+    await request('PUT','/api/financial-profile',{version:current.version,status:'deferred',accountResolutions,profile:{balanceDate:'2026-11-01',accounts,expenseCategoryIds:[],monthlyBudgetMinor:null,incomes:[],obligations:[],householdSize:1,goal:'',goalTargetMinor:null,monthlySavingMinor:null}});
     const categories=(await request('GET','/api/categories')).categories;
     const shop=categories.find((c:any)=>c.name==='Магазины'),food=categories.find((c:any)=>c.name==='Кафе и рестораны')??categories.filter((c:any)=>c.type==='expense'&&c.id!==shop.id)[0];
     const date=new Date().toISOString().slice(0,7)+'-02';
-    for(let i=1;i<=12;i++)await request('POST','/api/entries',{id:'ui-wallet-shop-'+i,direction:'out',amountMinor:i*100,categoryId:shop.id,financialAccountId:'ui-kaspi-card',counterparty:'WALLET SHOP '+i,occurredAt:date});
-    await request('POST','/api/entries',{id:'ui-wallet-other',direction:'out',amountMinor:90000,categoryId:food.id,financialAccountId:'ui-freedom-card',counterparty:'WALLET OTHER',occurredAt:date});
+    const seed=async(body:any)=>{const r=await request('POST','/api/entries',body);if(r.entry.payload.financialAccountId!==body.financialAccountId)await request('PATCH','/api/entries/'+body.id,{version:r.entry.version,financialAccountId:body.financialAccountId});};
+    for(let i=1;i<=12;i++)await seed({id:'ui-wallet-shop-'+i,direction:'out',amountMinor:i*100,categoryId:shop.id,financialAccountId:'ui-kaspi-card',counterparty:'WALLET SHOP '+i,occurredAt:date});
+    await seed({id:'ui-wallet-other',direction:'out',amountMinor:90000,categoryId:food.id,financialAccountId:'ui-freedom-card',counterparty:'WALLET OTHER',occurredAt:date});
     return {shop:shop.name,food:food.name};
   });
   await page.reload();await expect(page.getByRole('heading',{name:'Лента',exact:true})).toBeVisible();
@@ -85,9 +87,14 @@ test('wallet: бюджеты сохраняются, перевод повтор
   expect(find(after,'ui-kaspi-card').balanceMinor).toBe(find(before,'ui-kaspi-card').balanceMinor-10000);
   expect(find(after,'ui-freedom-deposit').balanceMinor).toBe(find(before,'ui-freedom-deposit').balanceMinor+10000);
   expect(after.accounts.map((a:any)=>[a.in,a.out])).toEqual(before.accounts.map((a:any)=>[a.in,a.out]));
-  await expect(transfer.getByRole('button',{name:'Отменить перевод 100 ₸',exact:true})).toHaveCount(1);
-  page.once('dialog',d=>d.accept());await transfer.getByRole('button',{name:'Отменить перевод 100 ₸',exact:true}).click();
-  await expect(transfer.getByRole('button',{name:'Отменить перевод 100 ₸',exact:true})).toHaveCount(0);
+  await transfer.getByRole('button',{name:'Изменить перевод',exact:true}).click();
+  await transfer.getByLabel('Сумма перевода',{exact:true}).fill('125');
+  await transfer.getByLabel('Комментарий перевода',{exact:true}).fill('SYNTHETIC EDIT');
+  await transfer.getByRole('button',{name:'Сохранить перевод',exact:true}).click();
+  await expect(transfer.getByText('SYNTHETIC EDIT',{exact:true})).toBeVisible();
+  await expect(transfer.getByRole('button',{name:'Отменить перевод 125 ₸',exact:true})).toHaveCount(1);
+  page.once('dialog',d=>d.accept());await transfer.getByRole('button',{name:'Отменить перевод 125 ₸',exact:true}).click();
+  await expect(transfer.getByRole('button',{name:'Отменить перевод 125 ₸',exact:true})).toHaveCount(0);
   const restored=await page.evaluate(async()=>await(await fetch('/api/wallet')).json());
   expect(restored.accounts.map((a:any)=>a.balanceMinor)).toEqual(before.accounts.map((a:any)=>a.balanceMinor));
 });
@@ -96,6 +103,7 @@ test('wallet: 390px, планшет, десктоп, логотипы, стоп�
   await setup(page);
   await page.evaluate(async()=>{
     const record=await(await fetch('/api/financial-profile')).json();
+    record.accountResolutions=record.profile.accounts.map((a:any)=>({id:a.id,targetId:null}));
     record.profile.accounts=[
       {id:'design-cash',bank:'Наличные',name:'Кошелёк',kind:'cash',openingBalanceMinor:72586500,budgets:[{id:'cash-personal',name:'Личные',amountMinor:9050000},{id:'cash-business',name:'Бизнес',amountMinor:18000000}]},
       {id:'design-kaspi',bank:'Kaspi',name:'Gold',kind:'card',openingBalanceMinor:25870000},
