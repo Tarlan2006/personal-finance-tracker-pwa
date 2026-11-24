@@ -7,7 +7,7 @@ import { CreateCategorySheet } from './category-create';
 
 export const emptyProfile=():FinancialProfile=>({balanceDate:todayStr(),accounts:[],expenseCategoryIds:[],monthlyBudgetMinor:null,incomes:[],obligations:[],householdSize:1,goal:'',goalTargetMinor:null,monthlySavingMinor:null});
 const moneyText=(n:number|null)=>n===null?'':String(n/100).replace('.',',');
-function Money({label,value,onChange,signed=false}:{label:string;value:number|null;onChange:(v:number|null)=>void;signed?:boolean}){
+export function Money({label,value,onChange,signed=false}:{label:string;value:number|null;onChange:(v:number|null)=>void;signed?:boolean}){
   const [raw,setRaw]=useState(()=>moneyText(value));
   return <Field label={label+' · ₸'}><input aria-label={label} inputMode="decimal" placeholder="Не указано" value={raw} onChange={e=>{
     const s=e.target.value;setRaw(s);const negative=s.trim().startsWith('-'),absolute=s.trim().replace(/^[-+]/,'');const parsed=absolute?inputMinor(absolute):null;

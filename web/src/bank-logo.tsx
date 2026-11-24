@@ -20,18 +20,18 @@ export function bankFallback(bank: string) {
   return { letter: Array.from(name)[0] || '?', background: colors[hash % colors.length] };
 }
 
-export function BankLogo({ bank, kind, size = 56 }: {
-  bank: string; kind?: FinancialAccount['kind']; size?: 28 | 36 | 40 | 56;
+export function BankLogo({ bank, kind, size = 56, glass = false }: {
+  bank: string; kind?: FinancialAccount['kind']; size?: 28 | 36 | 40 | 56; glass?: boolean;
 }) {
   const brand = bankBrand(bank, kind);
   // Remount when the selected bank changes so a failed image can be tried again.
-  return <BankMark key={brand} bank={bank} brand={brand} size={size}/>;
+  return <BankMark key={brand} bank={bank} brand={brand} size={size} glass={glass}/>;
 }
 
-function BankMark({ bank, brand, size }: { bank: string; brand: ReturnType<typeof bankBrand>; size: number }) {
+function BankMark({ bank, brand, size, glass }: { bank: string; brand: ReturnType<typeof bankBrand>; size: number; glass: boolean }) {
   const [failed, setFailed] = useState(false);
   const fallback = brand !== 'cash' && (brand === 'other' || failed) ? bankFallback(bank) : null;
-  return <span aria-hidden="true" className={'bank-logo bank-logo-' + brand}
+  return <span aria-hidden="true" className={'bank-logo bank-logo-' + brand + (glass ? ' bank-logo-glass' : '')}
     style={{width:size, height:size, fontSize:Math.round(size * .5), backgroundColor:fallback?.background}}>
     {brand === 'cash' ? '₸' : fallback ? fallback.letter :
       <img src={'/banks/' + brand + '.png'} width={size} height={size} alt="" aria-hidden="true"
