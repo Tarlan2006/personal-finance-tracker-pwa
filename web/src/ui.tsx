@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { ledgerDate,ledgerDayLabel } from './money';
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { lockScroll } from './scroll-lock';
 import { api,setAccountLoginProvider } from './api';
 import type { FinancialProfileRecord } from '../../shared/financial-profile';
@@ -7,9 +8,9 @@ export const fmt = (minor: number) => {
   const abs = Math.abs(minor), t = Math.floor(abs / 100), k = abs % 100;
   return `${minor < 0 ? '-' : ''}${String(t).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}${k ? ',' + String(k).padStart(2, '0') : ''} ₸`;
 };
-export const dayLabel = (ms: number) => new Date(ms).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', weekday: 'short', timeZone: 'Asia/Almaty' });
+export const dayLabel = ledgerDayLabel;
 export const monthLabel = (m: string) => { const [y, mo] = m.split('-').map(Number); return new Date(y, mo - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }); };
-export const todayStr = () => new Date(Date.now() + 5 * 3600e3).toISOString().slice(0,10);
+export const todayStr = () => ledgerDate(Date.now());
 export const thisMonth = () => todayStr().slice(0, 7);
 export const shiftMonth = (m: string, d: number) => { const [y, mo] = m.split('-').map(Number); const x = new Date(y, mo - 1 + d, 1); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`; };
 
@@ -93,7 +94,16 @@ export function Sheet({ title, onClose, children, busy=false }: { title: string;
   return <><div className="sheet-bg" style={{zIndex:20+layer*2}} onClick={()=>close.current()} aria-hidden="true" /><section ref={ref} tabIndex={-1} className="sheet" style={{zIndex:21+layer*2}} aria-busy={busy||undefined} role="dialog" aria-modal="true" aria-label={title}><div className="sheet-handle" aria-hidden="true"/><header className="sheet-heading"><h3>{title}</h3><button className="close-sheet" aria-label="Закрыть" disabled={busy} onClick={()=>close.current()}>×</button></header>{children}</section></>;
 }
 
-export const Field = ({ label, children }: { label: string; children: ReactNode }) => <div className="field"><label>{label}</label>{children}</div>;
+export function Field({label,children}:{label:string;children:ReactNode}) {
+  const id=useId();
+  const caption=useRef<HTMLLabelElement>(null);
+  useLayoutEffect(()=>{
+    const label=caption.current;
+    const control=label?.parentElement?.querySelector<HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement>('input,select,textarea');
+    if(label&&control){if(!control.id)control.id=id;label.htmlFor=control.id;}
+  });
+  return <div className="field"><label ref={caption}>{label}</label>{children}</div>;
+}
 
 const P = (d: string) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>;
 export const Icons = {

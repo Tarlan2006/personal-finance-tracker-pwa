@@ -21,7 +21,7 @@ export async function shortcutAdd(store: Store, accountId: string, f: Record<str
     categoryId = c.id;
   }
   const { entry, duplicate } = await createTx(store, accountId, {
-    id, direction, amount: f.amount, counterparty: f.counterparty ?? f.merchant ?? '', categoryId,
+    id, direction, currency:f.currency, amount: f.amount, counterparty: f.counterparty ?? f.merchant ?? '', categoryId,
     note: f.note ?? '', occurredAt: f.date || undefined,
   }, 'shortcut');
   const p = entry.payload;

@@ -9,30 +9,28 @@ export function normName(s: string): string {
 
 /** "1 500,50", "1,500.50", "-1500", "1500.5 ₸" → тиын (целое со знаком) или null. */
 export function parseAmountMinor(raw: unknown): number | null {
-  if (typeof raw === 'number') return Number.isFinite(raw) ? Math.round(raw * 100) : null;
-  let s = String(raw ?? '').replace(/[\s  ₸тТtT]|KZT|kzt|тг\.?/g, '').replace(/[−–—]/g, '-').replace(/^\+/, '');
-  if (!s || !/^-?[\d.,]+$/.test(s)) return null;
-  const neg = s.startsWith('-'); s = s.replace(/^-/, '');
-  const lastDot = s.lastIndexOf('.'), lastComma = s.lastIndexOf(',');
-  const sep = Math.max(lastDot, lastComma);
-  let intPart = s, frac = '';
-  if (sep >= 0) {
-    const after = s.length - sep - 1;
-    const other = s[sep] === '.' ? ',' : '.';
-    // разделитель дробный, если после него 1–2 цифры, либо второго вида разделителя нет и цифр не 3
-    if (after > 0 && after <= 2 || (after !== 3 && !s.includes(other) && s.split(s[sep]).length === 2)) {
-      intPart = s.slice(0, sep); frac = s.slice(sep + 1);
-    }
+  if (typeof raw !== 'number' && typeof raw !== 'string') return null;
+  if (typeof raw === 'number' && !/^-?\d+(?:\.\d{1,2})?$/.test(String(raw))) return null;
+  const value = String(raw).trim().replace(/\s*(?:₸|kzt|тг\.?|[тt])$/i, '').trim().replace(/[−–—]/g, '-');
+  const sign = value.startsWith('-') ? -1 : 1;
+  let digits = value.replace(/^[+-]/, '').trimStart();
+  // A final group of three is a thousands separator; fractional tenge have at most two digits.
+  const decimal = /([.,])(\d{1,2})$/.exec(digits);
+  if (decimal) digits = digits.slice(0, decimal.index);
+  const grouping = digits.match(/[.,\s]/)?.[0];
+  if (grouping) {
+    if (grouping === decimal?.[1]) return null;
+    const groups = /\s/.test(grouping) ? digits.split(/\s+/) : digits.split(grouping);
+    if (!/^\d{1,3}$/.test(groups[0]) || groups.slice(1).some(group => !/^\d{3}$/.test(group))) return null;
+    digits = groups.join('');
   }
-  intPart = intPart.replace(/[.,]/g, '');
-  if (!/^\d*$/.test(intPart) || !/^\d*$/.test(frac) || (intPart === '' && frac === '')) return null;
-  const minor = Number(intPart || '0') * 100 + Number((frac + '00').slice(0, 2));
-  if (!Number.isSafeInteger(minor)) return null;
-  return neg ? -minor : minor;
+  if (!/^\d+$/.test(digits) && !(decimal && !digits)) return null;
+  const minor = Number(digits) * 100 + Number((decimal?.[2] ?? '').padEnd(2, '0'));
+  return Number.isSafeInteger(minor) ? sign * minor : null;
 }
 
 export function localToMs(y: number, mo: number, d: number, h = 12, mi = 0, sec = 0): number | null {
-  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59) return null;
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || sec > 59) return null;
   const ms = Date.UTC(y, mo - 1, d, h, mi, sec) - TZ_OFFSET_MS;
   const chk = new Date(ms + TZ_OFFSET_MS);
   if (chk.getUTCMonth() !== mo - 1 || chk.getUTCDate() !== d) return null; // 31 февраля и т.п.

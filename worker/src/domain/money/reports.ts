@@ -13,8 +13,15 @@ interface CounterpartyAgg extends Agg {
 function add(a:number,b:number){const result=a+b;if(!Number.isSafeInteger(result))throw new HttpError(422,'total_too_large','Итог месяца превышает точный денежный диапазон; проверьте суммы операций');return result;}
 export async function monthlySummary(store: Store, accountId: string, month: string, query = new URLSearchParams()) {
   const { from, to } = monthRange(month);
+  const accountFilter = query.get('financialAccountId');
+  const args: Array<string|number> = [accountId, KIND_TX, from, to];
+  let predicate = '';
+  if (accountFilter !== null) {
+    predicate = accountFilter ? ' AND financial_account_id = ?' : ' AND financial_account_id IS NULL';
+    if (accountFilter) args.push(accountFilter);
+  }
   const rows = await store.all<{ id: string; occurred_at: number; payload_json: string }>(
-    'SELECT id, occurred_at, payload_json FROM entries WHERE account_id = ? AND kind = ? AND deleted_at IS NULL AND occurred_at >= ? AND occurred_at < ?', accountId, KIND_TX, from, to);
+    'SELECT id, occurred_at, payload_json FROM entries WHERE account_id = ? AND kind = ? AND deleted_at IS NULL AND occurred_at >= ? AND occurred_at < ?' + predicate, ...args);
   const meta = await loadMeta(store, accountId);
   const selectedCategory = query.get('category');
   const top: Record<'in'|'out', Array<{id: string; occurredAt: number; amountMinor: number; counterparty: string; note: string; categoryId: string|null}>> = {in: [], out: []};
@@ -24,7 +31,6 @@ export async function monthlySummary(store: Store, accountId: string, month: str
   let uncat = { count: 0, sum: 0 };
   for (const r of rows) {
     const p = JSON.parse(r.payload_json) as TxPayload;
-    if (query.has('financialAccountId') && (p.financialAccountId ?? '') !== query.get('financialAccountId')) continue;
     totals[p.direction] = add(totals[p.direction],p.amountMinor); totals.count++;
     const cid = effectiveCategory(meta, p);
     const key = cid ?? '_none';
@@ -34,7 +40,7 @@ export async function monthlySummary(store: Store, accountId: string, month: str
     top[p.direction].push({ id: r.id, occurredAt: r.occurred_at, amountMinor: p.amountMinor, counterparty: p.counterparty, note: p.note ?? '', categoryId: cid });
     top[p.direction].sort((a,b)=>b.amountMinor-a.amountMinor || b.occurredAt-a.occurredAt || a.id.localeCompare(b.id));
     if (top[p.direction].length > 10) top[p.direction].pop();
-    const nk = normName(p.counterparty) || '_none';
+    const nk = normName(p.counterparty);
     const c = cp[p.direction].get(nk) ?? {
       sum: 0, count: 0, display: p.counterparty || 'Без контрагента', effectiveCategoryId: cid, uncategorizedCount: 0,
     };

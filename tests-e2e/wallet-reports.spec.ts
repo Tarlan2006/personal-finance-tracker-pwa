@@ -115,7 +115,7 @@ test('wallet: 390px, планшет, десктоп, логотипы, стоп�
   await page.setViewportSize({width:390,height:844});await page.reload();
   const wallet=page.getByRole('region',{name:'Мои счета'}),cards=page.getByTestId('wallet-card');
   await expect(cards).toHaveCount(5);await expect(wallet.getByRole('heading',{name:'Счета и бюджеты'})).toBeVisible();
-  await expect(wallet.locator('.bank-logo img')).toHaveCount(4);
+  await expect(wallet.locator('.bank-logo')).toHaveCount(5);
   await expect.poll(()=>wallet.locator('.bank-logo img').evaluateAll(imgs=>imgs.every(img=>(img as HTMLImageElement).complete&&(img as HTMLImageElement).naturalWidth>0))).toBe(true);
   const kaspi=page.getByRole('button',{name:'Kaspi · Gold · Карта',exact:true});
   await kaspi.click();await expect(kaspi).toHaveAttribute('aria-pressed','true');
@@ -251,4 +251,15 @@ test('банк в интерфейсе: ошибка загрузки сохра
   await expect(logo.locator('img')).toHaveCount(0);
   expect(await geometry()).toEqual(before);
   await expect(select).toBeFocused();
+});
+
+test('четыре фирменных PNG действительно поставляются с приложением',async({page})=>{
+  await page.goto('/');
+  for(const bank of ['kaspi','halyk','forte','freedom']){
+    const size=await page.evaluate(async name=>{
+      const img=new Image();img.src='/banks/'+name+'.png';
+      try {await img.decode();return [img.naturalWidth,img.naturalHeight];}catch{return [0,0];}
+    },bank);
+    expect.soft(size,bank).toEqual([128,128]);
+  }
 });

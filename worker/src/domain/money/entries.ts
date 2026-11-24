@@ -10,7 +10,7 @@ export const KIND_TX = 'tx';
 const ID_RE = /^[A-Za-z0-9_.:-]{8,80}$/;
 
 export interface TxInput {
-  financialAccountId?: string | null;
+  currency?: string; financialAccountId?: string | null;
   id?: string; occurredAt?: number | string; direction: string; amountMinor?: number; amount?: string | number;
   counterparty?: string; categoryId?: string | null; note?: string; title?: string; bank?: string;
 }
@@ -26,6 +26,7 @@ export function normalizeTx(inp: TxInput, nowMs = now()) {
   for(const [key,max] of [['counterparty',120],['note',MAX_NOTE_LENGTH],['title',120],['bank',30],['categoryId',80],['financialAccountId',80]] as const){
     const value=inp[key];if(value!=null&&(typeof value!=='string'||value.length>max))throw new HttpError(400,'bad_field',`Некорректное поле ${key}`);
   }
+  if(inp.currency!==undefined && inp.currency!=='KZT')throw new HttpError(400,'bad_currency','Поддерживаются только тенге (KZT)');
   if(inp.amount!=null&&!['string','number'].includes(typeof inp.amount))throw new HttpError(400,'bad_amount','Некорректная сумма');
   const direction = inp.direction === 'in' || inp.direction === 'out' ? inp.direction : null;
   if (!direction) throw new HttpError(400, 'bad_direction', 'Направление: in (доход) или out (расход)');
@@ -67,7 +68,7 @@ export function insertStatements(store: Store, accountId: string, id: string, p:
     extra.importId ?? null, extra.dedupeKey ?? null, searchText(p),p.financialAccountId||null)];
   const norm = normName(p.counterparty);
   if (norm) stmts.push(store.stmt(
-    'INSERT INTO counterparties (id, account_id, name_norm, display, created_at) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING',
+    'INSERT INTO counterparties (id, account_id, name_norm, display, created_at) SELECT ?,?,?,?,? WHERE changes()=1 ON CONFLICT DO NOTHING',
     uuid(), accountId, norm, p.counterparty, t));
   return stmts;
 }
@@ -113,6 +114,7 @@ export async function updateTx(store: Store, accountId: string, id: string, body
     throw new HttpError(409, 'version_conflict', 'Запись уже изменена на другом устройстве');
   const old = JSON.parse(row.payload_json) as TxPayload;
   const merged = normalizeTx({
+    currency:body.currency,
     financialAccountId: body.financialAccountId !== undefined ? body.financialAccountId : old.financialAccountId,
     direction: body.direction ?? old.direction, amountMinor: body.amountMinor ?? (body.amount !== undefined ? undefined : old.amountMinor), amount: body.amount,
     counterparty: body.counterparty ?? old.counterparty, categoryId: body.categoryId !== undefined ? body.categoryId : old.categoryId,
@@ -127,7 +129,7 @@ export async function updateTx(store: Store, accountId: string, id: string, body
     merged.occurredAt, t, merged.payload.direction === 'in' ? merged.payload.amountMinor : -merged.payload.amountMinor,
     JSON.stringify(merged.payload), searchText(merged.payload),merged.payload.financialAccountId||null, accountId, id, row.version)];
   const norm = normName(merged.payload.counterparty);
-  if (norm) stmts.push(store.stmt('INSERT INTO counterparties (id, account_id, name_norm, display, created_at) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING', uuid(), accountId, norm, merged.payload.counterparty, t));
+  if (norm) stmts.push(store.stmt('INSERT INTO counterparties (id, account_id, name_norm, display, created_at) SELECT ?,?,?,?,? WHERE changes()=1 ON CONFLICT DO NOTHING', uuid(), accountId, norm, merged.payload.counterparty, t));
   const res = await store.batch(stmts);
   if (!res[0].meta?.changes) throw new HttpError(409, 'version_conflict', 'Запись уже изменена на другом устройстве');
   const fresh = await store.first<any>('SELECT * FROM entries WHERE account_id = ? AND id = ?', accountId, id);

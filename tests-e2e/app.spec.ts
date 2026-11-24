@@ -159,10 +159,11 @@ test('импорт CSV: отчёт сходится; назначение кат
   await expect(page.getByTestId('cat-row').filter({ hasText: 'Магазины' })).toContainText('12 000');
 });
 
-for(const [index,bank,title,imported,rejected,total] of [
-  [0,'halyk','Halyk',2,0,4],[1,'kaspi','Kaspi',2,1,5],[2,'freedom','Freedom',4,3,7]
+for(const [bank,title,imported,rejected,total] of [
+  ['halyk','Halyk',2,0,4],['kaspi','Kaspi',2,1,5],['freedom','Freedom',4,3,7]
 ] as const) test(`${title} PDF: ${bank==='kaspi'?'синтетический файл':'скачать пример'} → загрузить → отчёт → операции`,async({page})=>{
   await loggedIn(page);await tab(page,'Выписка').click();
+  const initialMatches = await page.evaluate(async () => (await (await fetch('/api/entries?q=TEST%20SHOP')).json()).items.length);
   for(const name of ['Halyk PDF','Kaspi PDF','Freedom PDF'])await expect(page.getByRole('radio',{name,exact:true})).toBeVisible();
   await page.getByRole('radio',{name:title+' PDF',exact:true}).check();
   let fixture='web/public/examples/kaspi.pdf';
@@ -180,7 +181,7 @@ for(const [index,bank,title,imported,rejected,total] of [
   await importStatement(page);await expect(report).toContainText('Добавлено0');await expect(report).toContainText(`Уже были (повторы)${imported}`);
   const count=await page.evaluate(async bank=>(await(await fetch('/api/entries')).json()).items.filter((e:any)=>e.payload.bank===bank).length,bank);expect(count).toBe(imported);
   await page.getByRole('button',{name:'Посмотреть в Ленте',exact:true}).click();await page.getByLabel('Поиск',{exact:true}).fill('TEST SHOP');
-  await expect(page.getByRole('button',{name:/TEST SHOP/})).toHaveCount(index+1);
+  await expect(page.getByRole('button',{name:/TEST SHOP/})).toHaveCount(initialMatches+1);
   await tab(page,'Отчёты').click();await expect(page.getByTestId('cp-row').filter({hasText:'TEST SHOP'})).toBeVisible();
 });
 
@@ -390,6 +391,7 @@ test('смена пароля: старый перестаёт работать 
   await page.getByRole('button', { name: 'Сменить пароль' }).click();
   await expect(page.getByRole('status')).toContainText('Пароль изменён');
   await page.getByRole('button', { name: '‹ Ещё' }).click(); await page.getByRole('button', { name: 'Выйти' }).click();
+  await expect(page.getByLabel('Логин', { exact: true })).toBeVisible();
   await login(page, PW); await expect(page.getByRole('alert')).toContainText('Неверный');
   await page.getByLabel('Пароль').fill('e2e-test-password-2'); await page.getByRole('button', { name: 'Войти' }).click();
   await expect(page.getByRole('heading', { name: 'Лента' })).toBeVisible();

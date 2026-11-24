@@ -7,7 +7,7 @@ export async function walletSummary(store:Store,accountId:string){
   if(!profile)return {accounts:[],balanceDate:null,unassigned:0};
   const now=Date.now(),{from,to}=monthRange(currentMonth(now)),balanceFrom=Date.parse(profile.balanceDate+'T00:00:00+05:00');
   // At most configured accounts + one unassigned group leave SQL, never raw history.
-  let rows:Array<{id:string|null;delta:number;income:number;expense:number;unassigned:number}>;
+  let rows:Array<{id:string|null;delta:string;income:string;expense:string;unassigned:number}>;
   try{rows=await store.all(`WITH configured AS (SELECT value AS id FROM json_each(?)),
     legs AS (
       SELECT financial_account_id AS id,value,occurred_at,kind='tx' AS is_tx FROM entries
@@ -18,12 +18,12 @@ export async function walletSummary(store:Store,accountId:string){
     ), grouped AS (
       SELECT CASE WHEN id IN (SELECT id FROM configured) THEN id ELSE NULL END AS id,value,occurred_at,is_tx FROM legs
     ) SELECT id,
-      SUM(CASE WHEN id IS NOT NULL AND occurred_at>=? THEN value ELSE 0 END) AS delta,
-      SUM(CASE WHEN id IS NOT NULL AND is_tx AND occurred_at>=? AND occurred_at<? AND value>0 THEN value ELSE 0 END) AS income,
-      SUM(CASE WHEN id IS NOT NULL AND is_tx AND occurred_at>=? AND occurred_at<? AND value<0 THEN -value ELSE 0 END) AS expense,
+      CAST(SUM(CASE WHEN id IS NOT NULL AND occurred_at>=? THEN value ELSE 0 END) AS TEXT) AS delta,
+      CAST(SUM(CASE WHEN id IS NOT NULL AND is_tx AND occurred_at>=? AND occurred_at<? AND value>0 THEN value ELSE 0 END) AS TEXT) AS income,
+      CAST(SUM(CASE WHEN id IS NOT NULL AND is_tx AND occurred_at>=? AND occurred_at<? AND value<0 THEN -value ELSE 0 END) AS TEXT) AS expense,
       SUM(CASE WHEN id IS NULL AND is_tx THEN 1 ELSE 0 END) AS unassigned
       FROM grouped GROUP BY id`,JSON.stringify(profile.accounts.map(a=>a.id)),accountId,now,accountId,now,balanceFrom,from,to,from,to);
   }catch(e){if(e instanceof Error&&/integer overflow/i.test(e.message))throw new HttpError(422,'total_too_large','Итоги превышают точный денежный диапазон');throw e;}
   const sums=new Map(rows.map(r=>[r.id,r]));
-  return {accounts:profile.accounts.map(a=>{const r=sums.get(a.id);return {...a,balanceMinor:a.openingBalanceMinor===null?null:safe(a.openingBalanceMinor+safe(r?.delta??0)),in:safe(r?.income??0),out:safe(r?.expense??0)};}),balanceDate:profile.balanceDate,unassigned:sums.get(null)?.unassigned??0};
+  return {accounts:profile.accounts.map(a=>{const r=sums.get(a.id);return {...a,balanceMinor:a.openingBalanceMinor===null?null:safe(a.openingBalanceMinor+safe(Number(r?.delta??0))),in:safe(Number(r?.income??0)),out:safe(Number(r?.expense??0))};}),balanceDate:profile.balanceDate,unassigned:sums.get(null)?.unassigned??0};
 }

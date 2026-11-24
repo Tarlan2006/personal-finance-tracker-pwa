@@ -19,7 +19,9 @@ type Ctx = { req: Request; url: URL; store: Store; env: Env; auth: auth.AuthCtx 
 type Handler = (c: Ctx) => Promise<Response>;
 const routes: Array<{ method: string; re: RegExp; h: Handler; mode: 'public' | 'session' | 'key' }> = [];
 function route(method: string, path: string, mode: 'public' | 'session' | 'key', h: Handler) {
-  routes.push({ method, re: new RegExp('^' + path.replace(/:[a-z]+/g, '([^/]+)') + '$'), h, mode });
+  const pattern = path.split('/').map(segment => /^:[a-z]+$/.test(segment)
+    ? '([^/]+)' : segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('/');
+  routes.push({ method, re: new RegExp('^' + pattern + '$'), h, mode });
 }
 const acc = (c: Ctx) => c.auth!.accountId;
 

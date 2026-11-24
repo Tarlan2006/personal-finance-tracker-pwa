@@ -1,3 +1,4 @@
+import {categoryPercentages} from './money';
 import { BankLogo, BankSelectControl, bankBrand } from './bank-logo';
 import { HistoryPanel } from './history';
 import { ImportReportView } from './import-report';
@@ -63,6 +64,7 @@ export function Reports() {
     if(row)shiftDocumentScroll(row.getBoundingClientRect().top-saved.top);
   },[s,err,month,dir]);
   const total = s ? s.totals[dir] : 0; const catRows = s?.byCategory[dir] ?? [];
+  const percentages=categoryPercentages(catRows.map(c=>c.sum));
   const detailsReady=s?.selectedCategory===category;
   const cpRows = detailsReady?s?.byCounterparty[dir]??[]:[];
   const chosen=catRows.find(c=>(c.id??'_none')===category),top=detailsReady?s?.topEntries?.[dir]??[]:[];
@@ -87,18 +89,18 @@ export function Reports() {
       {!catRows.length ? <div className="empty">За этот месяц нет {dir === 'out' ? 'расходов' : 'доходов'}</div> : <>
         <h2>По категориям</h2>
         <div className="group" style={{ padding: 16 }}><Donut data={catRows} total={total} selected={category} onSelect={toggleCategory}/><p className="sub donut-hint">Нажмите на сектор или категорию. Ещё раз — все категории.</p></div>
-        <div className="group" style={{ marginTop: 8 }}>{catRows.map(c => <button className="row category-row" key={c.id??'_none'} data-testid="cat-row" aria-pressed={category===(c.id??'_none')} onClick={()=>toggleCategory(c.id??'_none')}>
+        <div className="group" style={{ marginTop: 8 }}>{catRows.map((c,index) => <button className="row category-row" key={c.id??'_none'} data-testid="cat-row" aria-pressed={category===(c.id??'_none')} onClick={()=>toggleCategory(c.id??'_none')}>
           <span className="dot" style={{ background: c.color }} /><div className="grow"><div>{c.name}</div><div className="bar"><i style={{ width: `${total ? (c.sum / total) * 100 : 0}%`, background: c.color }} /></div></div>
-          <div style={{ textAlign: 'right' }}><div className="amt">{fmt(c.sum)}</div><div className="sub">{c.count} · {total ? Math.round((c.sum / total) * 100) : 0}%</div></div></button>)}</div>
+          <div style={{ textAlign: 'right' }}><div className="amt">{fmt(c.sum)}</div><div className="sub">{c.count} · {percentages[index]}%</div></div></button>)}</div>
         {category!==null&&<div className="category-selection"><strong>{chosen?.name??'Категория'}</strong><button className="text-action" onClick={()=>setCategory(null)}>Все категории</button></div>}
         <h2>Топ-10 {dir==='out'?'расходов':'доходов'}{chosen?' · '+chosen.name:''}</h2>
-        {!detailsReady?<p role="status" className="sub">Загружаем операции…</p>:<div className="group" data-testid="top-entries">{!top.length&&<p className="empty">В выбранной категории нет операций</p>}{top.map((entry,index)=><div className="row" key={entry.id} data-testid="top-entry"><span className="top-rank">{index+1}</span><div className="grow"><div className="ell">{entry.counterparty||entry.note||'Без получателя'}</div><div className="sub">{new Date(entry.occurredAt).toLocaleDateString('ru-RU',{day:'numeric',month:'short',timeZone:'Asia/Almaty'})} · {cats.find(c=>c.id===entry.categoryId)?.name??'Без категории'}</div></div><span className="amt">{fmt(entry.amountMinor)}</span></div>)}</div>}
+        {!detailsReady?<p role="status" className="sub">Загружаем операции…</p>:<div className="group" data-testid="top-entries">{!top.length&&<p className="empty">В выбранной категории нет операций</p>}{top.map((entry,index)=><div className="row" key={entry.id} data-testid="top-entry"><span className="top-rank">{index+1}</span><div className="grow"><div className="ell">{entry.counterparty||entry.note||'Без получателя'}</div><div className="sub">{new Date(entry.occurredAt).toLocaleDateString('ru-RU',{day:'numeric',month:'short',timeZone:'Etc/GMT-5'})} · {cats.find(c=>c.id===entry.categoryId)?.name??'Без категории'}</div></div><span className="amt">{fmt(entry.amountMinor)}</span></div>)}</div>}
         <h2>По {dir === 'out' ? 'получателям' : 'отправителям'}</h2>
         <div className="group">{cpRows.map(c => {
           const categoryName = c.effectiveCategoryId && catRows.find(x => x.id === c.effectiveCategoryId)?.name;
           const categoryLabel = c.uncategorizedCount > 0 ? 'Есть операции без категории' : categoryName || 'Несколько категорий';
-          return <button className="row" key={c.name} data-testid="cp-row" data-counterparty={c.name} onClick={e => {if(c.name!=='_none'){e.currentTarget.focus({preventScroll:true});setPick(c);}}}>
-            <div className="grow"><div className="ell">{c.display}</div><div className="sub">{c.count} {plural(c.count)} · {c.uncategorizedCount === c.count ? <span className="chip warn">выбрать категорию</span> : categoryLabel}</div><div className="bar"><i style={{ width: `${total ? (c.sum / total) * 100 : 0}%` }} /></div></div>
+          return <button className="row" key={c.name} data-testid="cp-row" data-counterparty={c.name} disabled={!c.name} onClick={e => {e.currentTarget.focus({preventScroll:true});setPick(c);}}>
+            <div className="grow"><div className="ell">{c.display}</div><div className="sub">{c.count} {plural(c.count)} · {!c.name?'Без получателя':c.uncategorizedCount === c.count ? <span className="chip warn">выбрать категорию</span> : categoryLabel}</div><div className="bar"><i style={{ width: `${total ? (c.sum / total) * 100 : 0}%` }} /></div></div>
             <span className="amt">{fmt(c.sum)}</span></button>; })}</div>
       </>}
     </>}
@@ -138,7 +140,7 @@ export function More({ onImported, onViewFeed }: { onImported?: (n:number)=>void
     <div className="group"><div className="row"><div className="grow"><div>{name}</div><div className="sub">{login}</div></div></div></div>
     <h2>Мои финансы</h2><div className="group">{item('profile','Финансовый профиль','Счета, доходы, цели')}</div>
     <h2>Данные</h2>
-    <div className="group">{item('import', 'Загрузить выписку')}{item('history','История и очистка')}{item('cats', 'Категории и правила')}<a className="row" href="/api/export.csv" download style={{ textDecoration: 'none' }}><span className="grow">Экспорт CSV</span><span className="sub">›</span></a></div>
+    <div className="group">{item('import', 'Загрузить выписку')}{item('history','История и очистка')}{item('cats', 'Категории и правила')}<a className="row" href="/api/export.csv" download="qarjy-export.csv" style={{ textDecoration: 'none' }}><span className="grow">Экспорт CSV</span><span className="sub">›</span></a></div>
     <h2>Интеграции</h2><div className="group">{item('keys', 'Быстрые команды (ключи)')}</div>
     <h2>Приложение</h2><div className="group">{item('sync', 'Синхронизация')}{item('theme', 'Тема')}</div>
     <h2>Настройки</h2><div className="group">{item('devices', 'Устройства')}{item('password', 'Сменить пароль')}</div>

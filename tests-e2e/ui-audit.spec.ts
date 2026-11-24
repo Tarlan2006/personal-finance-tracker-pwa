@@ -123,7 +123,7 @@ test('аудит: все быстрые суммы, оба входа в имп�
 });
 
 test('аудит: двойная отправка входа создаёт только один запрос',async({page})=>{
- await page.goto('/');await page.getByLabel('Логин',{exact:true}).fill('zz-ui');await page.getByLabel('Пароль',{exact:true}).fill('e2e-ui-audit-password-1');const gate=await hold(page,'**/api/auth/login');await page.locator('form').evaluate(el=>{(el as HTMLFormElement).requestSubmit();(el as HTMLFormElement).requestSubmit();});await gate.requested;await expect(page.getByRole('button',{name:'Входим…',exact:true})).toBeDisabled();gate.release();await expect(page.getByRole('heading',{name:'Лента',exact:true})).toBeVisible();expect(gate.count()).toBe(1);
+ await page.goto('/');await page.getByLabel('Логин',{exact:true}).fill('zz-ui');await page.getByLabel('Пароль',{exact:true}).fill('e2e-ui-audit-password-1');const gate=await hold(page,'**/api/auth/login');await page.locator('form').evaluate(el=>{(el as HTMLFormElement).requestSubmit();(el as HTMLFormElement).requestSubmit();});await gate.requested;await expect(page.getByRole('button',{name:'Входим…',exact:true})).toBeDisabled();gate.release();await expect(page.getByRole('heading',{name:/^(Лента|Где ваши деньги\?)$/})).toBeVisible();expect(gate.count()).toBe(1);
 });
 
 test('аудит: медленное сохранение на устройстве не даёт закрыть форму или потерять поля',async({page})=>{

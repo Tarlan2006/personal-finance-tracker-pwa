@@ -9,7 +9,9 @@ async function prepare(page:Page){
  });await page.reload();await expect(rows(page)).toHaveCount(50);
 }
 async function press(page:Page,index:number){
- const row=rows(page).nth(index);await row.scrollIntoViewIfNeeded();await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+ const row=rows(page).nth(index);
+ // Move the contact point above the fixed navigation before sending a native touch.
+ await row.evaluate(el=>el.scrollIntoView({block:"center",behavior:"instant"}));await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
  if(page.context().browser()!.browserType().name()==='chromium'){
   const box=(await row.boundingBox())!,touch={x:box.x+box.width/2,y:box.y+box.height/2};const cdp=await page.context().newCDPSession(page);
   await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[touch]});await expect(row).toHaveAttribute('aria-checked','true');await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await cdp.detach();

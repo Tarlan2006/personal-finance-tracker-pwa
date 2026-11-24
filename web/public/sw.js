@@ -1,7 +1,7 @@
 // Cache Storage is optional (for example, in restricted Safari sessions).
 // API responses always go directly to the network.
-const SHELL = 'qarjy-shell-v3';
-const FILES = ['/', '/manifest.webmanifest', '/icon.svg', '/apple-touch-icon.png'];
+const SHELL = 'qarjy-shell-v4';
+const FILES = ['/manifest.webmanifest', '/icon.svg', '/apple-touch-icon.png'];
 const BANK_FILES = ['kaspi', 'halyk', 'forte', 'freedom'].map(bank => '/banks/' + bank + '.png');
 function isImage(response) {
   return response.ok && (response.headers.get('Content-Type') || '').startsWith('image/');
@@ -13,14 +13,30 @@ async function withCache(action) {
   } catch { /* Disabled storage must not break network responses or activation. */ }
 }
 self.addEventListener('install', e => {
-  e.waitUntil(withCache(async storage => {
-    const cache = await storage.open(SHELL);
-    await cache.addAll(FILES);
+  e.waitUntil((async () => {
+    const cache = await withCache(storage => storage.open(SHELL));
+    if (!cache) {
+      if (self.registration?.active) throw new Error('Shell cache unavailable');
+      return self.skipWaiting();
+    }
+    const shell = await fetch('/', {cache:'reload'});
+    if (!shell.ok) throw new Error('Shell unavailable');
+    const html = await shell.clone().text();
+    const assets = [...html.matchAll(/\b(?:src|href)=["'](\/assets\/[A-Za-z0-9_.\/-]+\.(?:js|css))["']/g)].map(match => match[1]);
+    try {
+      await cache.addAll([...FILES, ...new Set(assets)]);
+      await cache.put('/', shell);
+    } catch (error) {
+      const storageDenied = error.name === 'QuotaExceededError' || error.name === 'SecurityError';
+      if (storageDenied && !self.registration?.active) return self.skipWaiting();
+      throw error;
+    }
     await Promise.allSettled(BANK_FILES.map(async path => {
       const response = await fetch(path);
       if (isImage(response)) await cache.put(path, response);
     }));
-  }).then(() => self.skipWaiting()));
+    return self.skipWaiting();
+  })());
 });
 self.addEventListener('activate', e => {
   e.waitUntil(withCache(async storage => {
@@ -34,7 +50,7 @@ self.addEventListener('fetch', e => {
   e.respondWith((async () => {
     try {
       const response = await fetch(e.request);
-      if (response.ok && (u.pathname.startsWith('/assets/') || (u.pathname.startsWith('/banks/') && isImage(response)) || FILES.includes(u.pathname))) {
+      if (response.ok && (u.pathname.startsWith('/assets/') || (u.pathname.startsWith('/banks/') && isImage(response)) || u.pathname === '/' || FILES.includes(u.pathname))) {
         const copy = response.clone();
         e.waitUntil(withCache(async storage => (await storage.open(SHELL)).put(e.request, copy)));
       }
