@@ -1,4 +1,4 @@
-import { BankLogo } from './bank-logo';
+import { BankLogo, bankBrand } from './bank-logo';
 import { MAX_NOTE_LENGTH, type EntryDTO as Entry } from '../../shared/types';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { shiftDocumentScroll } from './scroll-lock';
@@ -195,8 +195,9 @@ export function Feed({ onImport }: {onImport:()=>void}) {
     {!loading && !groups.length && (filter!=='all'||!!q) && <div className="empty">{q?'Ничего не найдено':'Нет операций по выбранному фильтру'}</div>}
     {groups.map(([day, list]) => <section className="day-section" key={day}><h2>{day}</h2><div className="group">{list.map(e => {
       const c = cm.get(e.effectiveCategoryId ?? ''); const p = e.payload;const account=financialProfile?.profile?.accounts.find(a=>a.id===p.financialAccountId);
+      const bank = account?.bank || (p.bank && bankBrand(p.bank) !== 'other' ? p.bank : '');
       return <EntryCard key={e.id} id={e.id} selecting={selecting} selected={selected.has(e.id)} disabled={deleting||selecting&&selected.size>=1000&&!selected.has(e.id)} onSelect={()=>toggle(e.id)} onOpen={()=>setEdit(e)} label={`${p.counterparty || 'Без получателя'} ${fmt(p.amountMinor)}`}>
-        {account ? <BankLogo bank={account.bank} kind={account.kind} size={40}/> : <span className="merchant-icon" style={{color:c?.color??'var(--accent)',background:c?.color?c.color+'20':undefined}} aria-hidden="true">{p.direction==='in'?'↙':(p.counterparty||'₸').slice(0,1).toUpperCase()}</span>}
+        {bank || account?.kind === 'cash' ? <BankLogo bank={bank} kind={account?.kind} size={40}/> : <span className="merchant-icon" style={{color:c?.color??'var(--accent)',background:c?.color?c.color+'20':undefined}} aria-hidden="true">{p.direction==='in'?'↙':(p.counterparty||'₸').slice(0,1).toUpperCase()}</span>}
         <div className="grow"><div className="ell">{p.counterparty || p.note || 'Без получателя'}</div><div className="sub ell">{c ? c.name : <span className="chip warn">без категории</span>}{!p.categoryId&&c&&<span className="auto-mark" title="Категория по привязке или правилу"> · авто</span>}{p.note && p.counterparty ? ' · ' + p.note : ''}</div>{account&&<div className="sub ell">{account.bank} · {account.name}</div>}</div>
         <span className={'amt ' + p.direction}>{p.direction === 'in' ? '+' : '−'}{fmt(p.amountMinor)}</span>
       </EntryCard>;

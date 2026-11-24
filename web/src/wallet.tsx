@@ -52,15 +52,15 @@ export function Wallet({ queueCount, disabled }: {queueCount:number;disabled:boo
   const expanded=accounts.find(a=>a.id===selectedAccount)?.id??accounts.at(-1)!.id;
   const order=selectedAccount?[accounts.find(a=>a.id===expanded)!,...accounts.filter(a=>a.id!==expanded)]:accounts;
   const cashOpen=accounts.find(a=>a.id===expanded)?.kind==='cash';
-  // All visual movement uses transform/opacity. The stack reserves one expanded card,
-  // so selecting a card never moves the feed below it or animates document layout.
-  const expandedHeight=cashOpen?448:344,step=98,closedHeight=122;
+  // Account for the exposed bottom edge of the last collapsed card after reordering.
+  const step=80, closedHeight=96, expandedHeight=cashOpen?332:248;
+  const stackHeight=(accounts.length-1)*step+expandedHeight+(selectedAccount && accounts.length>1 ? closedHeight-step : 0);
   const reset=()=>setState({selectedAccount:null});
   return <section className="wallet" aria-label="Мои счета">
     <div className="wallet-heading"><h2>Счета и бюджеты</h2><div className="wallet-tools"><button className="wallet-round" disabled={disabled} aria-label="Перевод между счетами" onClick={()=>setTransferring(true)}>⇄</button><button className="wallet-round" disabled={disabled} aria-label="Свернуть карточки" onClick={reset}>✕</button></div></div>
     <button className="wallet-all text-action" disabled={disabled} aria-pressed={selectedAccount===null} onClick={reset}>Все счета</button>
     {error&&<div role="alert" className="err">{error} <button className="text-action" onClick={()=>setRetry(n=>n+1)}>Повторить загрузку счетов</button></div>}
-    <div className="wallet-stack" style={{height:(accounts.length-1)*step+(accounts.some(a=>a.kind==='cash')?448:344)} as CSSProperties}>
+    <div className="wallet-stack" style={{height:stackHeight,'--wallet-step':`${step}px`} as CSSProperties}>
       {accounts.map(a=>{
         const open=a.id===expanded,slot=order.findIndex(row=>row.id===a.id);
         const height=open?expandedHeight:closedHeight,y=slot*step+(selectedAccount&&slot>0?expandedHeight-step:0),brand=bankBrand(a.bank,a.kind),budgets=a.budgets??[];
@@ -71,7 +71,7 @@ export function Wallet({ queueCount, disabled }: {queueCount:number;disabled:boo
           <div className="wallet-card-enter">
             <div className="wallet-surface" aria-hidden="true"><i className="wallet-surface-top"/><i className="wallet-surface-middle"/><i className="wallet-surface-bottom"/></div>
             <button type="button" disabled={disabled} className="wallet-card-toggle" aria-pressed={selectedAccount===a.id} aria-expanded={open} aria-label={`${a.bank} · ${a.name} · ${kinds[a.kind]}`} onClick={toggle}>
-              <span className="wallet-card-heading"><BankLogo bank={a.bank} kind={a.kind}/><span className="wallet-card-title"><strong>{brand==='cash'?'Наличка':a.bank}</strong><span className="wallet-account-name">{a.name}{a.kind==='deposit'?' · Депозит':''}</span><span className="wallet-budget-placeholder">{brand==='cash'?`Счёт · ${budgets.length} ${budgets.length===1?'бюджет':budgets.length>1&&budgets.length<5?'бюджета':'бюджетов'}`:'\u00a0'}</span></span><span className="wallet-mini-balance"><small>БАЛАНС</small><b>{data&&a.balanceMinor!==null?fmt(a.balanceMinor):'—'}</b></span></span>
+              <span className="wallet-card-heading"><BankLogo bank={a.bank} kind={a.kind} size={40}/><span className="wallet-card-title"><strong>{brand==='cash'?'Наличка':a.bank}</strong><span className="wallet-account-name">{a.name}{a.kind==='deposit'?' · Депозит':''}</span><span className="wallet-budget-placeholder">{brand==='cash'?`Счёт · ${budgets.length} ${budgets.length===1?'бюджет':budgets.length>1&&budgets.length<5?'бюджета':'бюджетов'}`:'\u00a0'}</span></span><span className="wallet-mini-balance"><small>БАЛАНС</small><b>{data&&a.balanceMinor!==null?fmt(a.balanceMinor):'—'}</b></span></span>
             </button>
             {brand!=='cash'&&<button type="button" className="wallet-budget-add" aria-label={'Бюджеты '+a.bank+' · '+a.name} disabled={disabled} onClick={()=>setBudgetAccount(a.id)}>+ бюджет</button>}
             <div className="wallet-details" aria-hidden={!open}>

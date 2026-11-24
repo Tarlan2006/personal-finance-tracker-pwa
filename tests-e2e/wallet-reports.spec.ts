@@ -126,7 +126,7 @@ test('wallet: 390px, планшет, десктоп, логотипы, стоп�
   await expect(wallet.getByRole('button',{name:/Личные.*90/})).toBeVisible();
   const scroller=wallet.getByLabel('Бюджеты наличных',{exact:true});expect(await scroller.evaluate(el=>el.scrollWidth>el.clientWidth)).toBe(true);
   await scroller.evaluate(el=>el.scrollLeft=el.scrollWidth);expect(await scroller.evaluate(el=>el.scrollLeft)).toBeGreaterThan(0);
-  for(const width of [390,768,1280]){
+  for(const width of [360,390,768,1280]){
     await page.setViewportSize({width,height:width===390?844:1024});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);
     await expect.poll(()=>wallet.locator('.wallet-cash').evaluate(el=>el.querySelector('.wallet-flows')!.getBoundingClientRect().bottom<=el.getBoundingClientRect().bottom)).toBe(true);
@@ -134,6 +134,8 @@ test('wallet: 390px, планшет, десктоп, логотипы, стоп�
     await wallet.screenshot({path:`test-results/wallet-design-${test.info().project.name}-${width}.png`,animations:'disabled',scale:'css',style:'.tabbar,.fab,.island-toast{visibility:hidden!important}'});
   }
   await page.emulateMedia({reducedMotion:'reduce'});await kaspi.click();
+  expect(await wallet.locator('.wallet-kaspi.expanded').evaluate(el=>el.clientHeight)).toBeLessThanOrEqual(250);
+  expect(await wallet.locator('.wallet-stack').evaluate(el=>el.clientHeight)).toBeLessThanOrEqual(590);
   await expect(wallet.locator('.wallet-kaspi .wallet-balance')).toHaveText(/258\s?700 ₸/);
   expect(await wallet.locator('.wallet-kaspi').evaluate(el=>parseFloat(getComputedStyle(el).transitionDuration))).toBeLessThan(0.001);
 });
@@ -211,7 +213,7 @@ test('банк в интерфейсе: импорт, кошелёк и лент
   const settled = async (region:typeof wallet) => {
     await expect(region.locator('.bank-logo').first()).toBeVisible();
     await expect.poll(() => region.locator('.bank-logo img').evaluateAll(images =>
-      images.every(el => (el as HTMLImageElement).complete && (el as HTMLImageElement).naturalWidth > 0)
+      images.length > 0 && images.every(el => (el as HTMLImageElement).complete && (el as HTMLImageElement).naturalWidth === 128)
     )).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   };
@@ -228,6 +230,9 @@ test('банк в интерфейсе: импорт, кошелёк и лент
 });
 
 test('банк в интерфейсе: ошибка загрузки сохраняет размер и фокус', async ({page}) => {
+  // The wallet already renders Kaspi. Prevent a successful preload before testing a failed response.
+  const imageUrl='**/banks/kaspi.png';
+  await page.route(imageUrl,route=>route.abort());
   await page.emulateMedia({reducedMotion:'reduce'});
   await setup(page);
   await page.getByRole('button',{name:'Добавить операцию',exact:true}).click();
@@ -236,7 +241,8 @@ test('банк в интерфейсе: ошибка загрузки сохра
   const logo = sheet.locator('.bank-select-control .bank-logo');
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
-  await page.route('**/banks/kaspi.png',async route => { await gate; await route.abort(); });
+  await page.unroute(imageUrl);
+  await page.route(imageUrl,async route => { await gate; await route.abort(); });
   await select.focus();
   await select.selectOption('ui-kaspi-card');
   // Measure within the field: the sheet itself can move while iOS scrolls to focus.
@@ -262,4 +268,19 @@ test('четыре фирменных PNG действительно поста�
     },bank);
     expect.soft(size,bank).toEqual([128,128]);
   }
+});
+
+test('лента показывает банк выписки без привязки к счёту', async ({page}) => {
+  await setup(page);
+  const rowId='ui-statement-no-account';
+  const status=await page.evaluate(async id=>(await fetch('/api/entries',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id,bank:'halyk',direction:'out',amountMinor:75,counterparty:'TEST SHOP'})
+  })).status,rowId);
+  expect([200,201]).toContain(status);
+  await page.reload();
+  const logo=page.locator('[data-entry-id="'+rowId+'"] .bank-logo img');
+  await expect(logo).toHaveAttribute('src','/banks/halyk.png');
+  await logo.scrollIntoViewIfNeeded();
+  await expect.poll(()=>logo.evaluate(el=>(el as HTMLImageElement).naturalWidth)).toBe(128);
 });

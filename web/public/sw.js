@@ -1,6 +1,6 @@
 // Cache Storage is optional (for example, in restricted Safari sessions).
 // API responses always go directly to the network.
-const SHELL = 'qarjy-shell-v4';
+const SHELL = 'qarjy-shell-v5';
 const FILES = ['/manifest.webmanifest', '/icon.svg', '/apple-touch-icon.png'];
 const BANK_FILES = ['kaspi', 'halyk', 'forte', 'freedom'].map(bank => '/banks/' + bank + '.png');
 function isImage(response) {

@@ -45,8 +45,8 @@ it('SW: APIs, other origins and mutations bypass interception',async()=>{
  expect(w.network).not.toHaveBeenCalled();expect(open).not.toHaveBeenCalled();
 });
 it('SW: activation removes only obsolete Qarjy shell caches',async()=>{
- const remove=vi.fn();const w=worker({keys:async()=>['qarjy-shell-v3','qarjy-shell-v4','other-app'],delete:remove});await w.dispatch('activate');
- expect(remove).toHaveBeenCalledExactlyOnceWith('qarjy-shell-v3');
+ const remove=vi.fn();const w=worker({keys:async()=>['qarjy-shell-v4','qarjy-shell-v5','other-app'],delete:remove});await w.dispatch('activate');
+ expect(remove).toHaveBeenCalledExactlyOnceWith('qarjy-shell-v4');
 });
 
 it('SW: precaches bank images and ignores HTML returned for missing files', async () => {
